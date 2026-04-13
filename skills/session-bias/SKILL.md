@@ -110,6 +110,30 @@ Each timeframe uses a different EMA length. **Swap the EMA setting as you move b
 
 You MAY add additional indicators if you believe they will strengthen your read (e.g., ATR for volatility, MACD for momentum). Use your judgment — but always clean up any indicators you add at the end.
 
+### Volume Footprint Bar Style — Entry Timing & Conviction Reader
+
+**Volume Footprint** is a chart bar style (not an indicator) that shows buy vs sell volume at every price level WITHIN each bar. It is the single best tool for reading **who is in control at a level** and **timing the exact entry**.
+
+**When to enable it:**
+- Turn it ON when you reach the **5m timeframe** (Phase 3, step 6) and/or **15m** during the entry zone
+- Use `chart_set_type` with `type: "VolumeFootprint"` (or via `ui_click` on the chart type selector if needed)
+- Footprint is heavy — only enable on 5m/15m, NOT on higher TFs
+- **Switch back to Candles** (`chart_set_type` with `type: "Candles"`) in Phase 6 cleanup
+
+**What to read from the footprint (on the last 5–10 bars and any bar touching a key S/R level):**
+
+| Signal | What It Looks Like | What It Means |
+|---|---|---|
+| **Delta** (Buy vol − Sell vol per bar) | Positive delta = more aggressive buying, negative = aggressive selling | Direction of aggression in that bar |
+| **Delta divergence** | Price makes new high but delta is lower than previous high's delta | Rally losing buying conviction — reversal risk |
+| **Absorption** | Large sell volume at a level but price doesn't drop (or vice versa) | Passive buyers absorbing sellers = strong support holding |
+| **Imbalance** | One side shows 3x+ volume vs the opposite price level diagonally | Aggressive one-sided pressure — direction-confirming |
+| **Stacked imbalances** (3+ in a row) | Multiple consecutive imbalance prints in the same direction | Institutional thrust — high-conviction trend continuation |
+| **Point of Control (POC)** per bar | Price level with the highest volume in a bar | Acts as micro magnet / intrabar pivot |
+| **High-volume node at S/R** | A cluster of high-volume prints at a key level | Real institutional interest — level is being defended |
+| **Low-volume breakout** | Break of S/R with thin footprint volume | Likely a trap — expect snap-back |
+| **Exhaustion bar** | Large range + high volume + closes opposite to delta | Climactic move — reversal/pullback likely |
+
 ---
 
 ## Phase 3: Multi-Timeframe Analysis (TOP-DOWN)
@@ -196,16 +220,23 @@ Read **ATR(14) on the 15m** — this is your volatility ruler for the scalp:
 - Note any broken S/R levels that have flipped (broken support → resistance, broken resistance → support)
 - Is the 21 EMA sloping up or down? Sloping = momentum. Flat = ranging.
 
-#### 6. 5m — PRECISION ENTRY — EMA 9
+#### 6. 5m — PRECISION ENTRY — EMA 9 — VOLUME FOOTPRINT ON
 - Set EMA length to 9
+- **Enable Volume Footprint bar style** via `chart_set_type` with `type: "VolumeFootprint"`
 - Fine-tune the exact entry level
 - Look for confirmation candles (engulfing, pin bar, momentum shift) **at an S/R level**
 - This is the trigger timeframe
 - Entry should ideally be at or near a confluent S/R level, not in empty space
 - Watch for price rejecting or reclaiming the **9 EMA** — this is your momentum trigger
+- **Read the footprint on the last 3–5 bars and any bar touching key S/R:**
+  - Is delta aligned with the bias direction? (Longs need positive/rising delta, shorts need negative/falling delta)
+  - Is there **absorption at the entry S/R level**? (e.g., for a long: heavy sell volume printed at support but price held = buyers absorbing)
+  - Any **stacked imbalances** in the bias direction in the last 2–3 bars?
+  - Is there **delta divergence** against the prevailing move? (warning sign — may want to wait)
+  - Is the footprint volume **concentrated at the entry level** (high-volume node) or thin?
 - Optional: temporarily add a second EMA (21) to check for 9/21 crossover confirmation
 
-**After scanning all timeframes, switch back to 15m for the user.**
+**After scanning all timeframes, switch back to 15m for the user** and **switch chart type back to Candles**.
 
 ---
 
@@ -242,7 +273,19 @@ S/R is a CORE part of your bias. On every timeframe, build a confluence map of s
 - Price below VWAP = intraday bearish bias, VWAP acts as resistance
 - VWAP is most relevant on 5m, 15m, 30m timeframes
 
-#### Source 6: Previous Session Levels (PDH / PDL / PDC)
+#### Source 6: Volume Footprint — Conviction Read at S/R
+
+On the 5m (and optionally 15m) with Volume Footprint enabled, read the footprint **specifically at each nearby S/R level** to grade conviction:
+
+- **Level is being defended** (strong S/R): heavy volume prints AT the level + price doesn't break through + delta flips direction at the level = absorption
+- **Level is breaking** (flipping): stacked imbalances punching through the level + price closes beyond = real break, follow through
+- **Level is a trap** (fake break): price pierces level but footprint volume is thin + no imbalances = expect snap-back, fade the break
+- **Elevate an S/R level's strength by +1 tier** if the footprint shows clear absorption or stacked imbalances in its favor
+- **Demote an S/R level** if a break occurs on thin footprint volume with no imbalances — it's likely a stop run, not a real break
+
+This is the difference between a level that *looks* strong on a chart and one that is *actually* being defended by real flow.
+
+#### Source 7: Previous Session Levels (PDH / PDL / PDC)
 - Retrieved in Phase 1D
 - **PDH** and **PDL** are among the strongest intraday S/R levels — institutions key off these
 - **PDC** is the equilibrium level — acts as a magnet and pivot for intraday direction
@@ -382,6 +425,7 @@ Weighted Score: [X/12]
 - Trigger: [what confirms the entry on 5m/15m]
 - S/R confluence: [which S/R level(s) support this entry]
 - Volume confirmation: [what volume should look like to confirm]
+- **Footprint read at entry level**: [delta direction, absorption / imbalance / divergence observed, POC location — what footprint signal would green-light the entry]
 
 ### Stop Loss
 - Level: [price — must be BEHIND an S/R level, at least 1x ATR away from entry]
@@ -407,7 +451,9 @@ Weighted Score: [X/12]
 
 ## Phase 6: Cleanup
 
-Remove any indicators you added that weren't already on the chart. Leave the chart on 15m timeframe.
+- **Switch chart type back to Candles** via `chart_set_type` with `type: "Candles"` (footprint is heavy and the user prefers candles as default)
+- Remove any indicators you added that weren't already on the chart
+- Leave the chart on 15m timeframe
 
 ---
 
@@ -429,6 +475,8 @@ Remove any indicators you added that weren't already on the chart. Leave the cha
 
 **Volume & Volatility:**
 - **Volume confirms.** A breakout on high volume is real. A breakout on low volume is a trap. Always check.
+- **Footprint is the truth serum.** Candles can lie, footprint can't. Use delta, absorption, and imbalances on the 5m to grade whether a level is really being defended or really breaking before pulling the trigger.
+- **No footprint confirmation = wait.** If the entry level shows mixed/neutral delta and no clear absorption or imbalance, don't enter on candle pattern alone.
 - **ATR sizes the trade.** Targets = 1.5–2.5x ATR. Stops = 1–1.5x ATR. Never ignore volatility.
 - **Low ATR = no trade.** If the market isn't moving, don't force it.
 
