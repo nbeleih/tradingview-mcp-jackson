@@ -87,11 +87,12 @@ Check if these indicators are on the chart. Add any that are missing:
 | Indicator | Full Name for `chart_manage_indicator` | Settings |
 |---|---|---|
 | Pivot Points | Pivot Points Standard | (default — Traditional Auto) |
-| FVG/iFVG | Already on chart (Nephew_Sam_) | — |
-| RSI | Relative Strength Index | `{"length": 14}` |
+| FVG/iFVG | Nephew_Sam_'s FVG/iFVG indicator | — |
 | VWAP | VWAP | (default) |
 | ATR | Average True Range | `{"length": 14}` |
 | Volume | Volume | (default) |
+
+**Note on FVG/iFVG:** This indicator is NOT always on the chart. Check `chart_get_state` — if it's missing, you must add/enable it (via `chart_manage_indicator` or by having the user toggle it on from their saved indicators) before calling `data_get_pine_boxes` with `study_filter: "FVG"`. Without it visible, FVG zones cannot be read.
 
 ### EMA Setup — Timeframe-Specific
 
@@ -141,7 +142,7 @@ You MAY add additional indicators if you believe they will strengthen your read 
 Analyze ALL timeframes in this order. For each timeframe:
 - Switch with `chart_set_timeframe`
 - **Set the EMA length** for this timeframe via `indicator_set_inputs`
-- Read `data_get_study_values` (EMA, RSI, VWAP, ATR readings)
+- Read `data_get_study_values` (EMA, VWAP, ATR readings)
 - Read `data_get_ohlcv` with `summary: true`
 - Read `data_get_ohlcv` with `count: 20` (to identify swing highs/lows for manual S/R + volume analysis)
 - Read `data_get_pine_labels` with `study_filter: "Pivot"` (pivot levels)
@@ -200,7 +201,6 @@ Read **ATR(14) on the 15m** — this is your volatility ruler for the scalp:
 - Set EMA length to 50
 - Where is price relative to the **1H 50 EMA**, VWAP, and pivots?
 - Any 1H FVGs that price is reacting to?
-- RSI reading — overbought/oversold on the 1H?
 - Identify 1H swing highs/lows as session-level S/R
 - Note any repeated price rejections at specific levels
 - **This is the session-level bias.**
@@ -208,7 +208,7 @@ Read **ATR(14) on the 15m** — this is your volatility ruler for the scalp:
 #### 4. 30m — TRANSITION ZONE — EMA 21
 - Set EMA length to 21
 - Confirms or contradicts the 1H bias
-- Look for momentum shifts (EMA crosses, RSI divergence)
+- Look for momentum shifts (EMA crosses, price structure breaks)
 - Identify S/R levels that align with 1H levels (confluence = stronger)
 
 #### 5. 15m — ENTRY TIMEFRAME — EMA 21
@@ -348,7 +348,6 @@ Before outputting a trade, run through this checklist. If ANY condition is true,
 - [ ] **5m and 15m disagree on direction** — no trigger alignment
 - [ ] **Weighted score between -2 and +2** — conflicting timeframes
 - [ ] **Volume on last 3 bars < 0.5x average** — no participation, moves are unreliable
-- [ ] **RSI between 45–55 on ALL of 5m, 15m, 30m, 1H** — no momentum anywhere
 - [ ] **Price is in the middle of a wide S/R gap** with no level within 50 pts — nothing to trade off of
 - [ ] **Asia session or After Hours** — unless a clear overnight catalyst exists
 - [ ] **Friday after 2 PM ET** or **pre-holiday session** — thinning liquidity, unreliable
@@ -357,14 +356,14 @@ If all clear, proceed with the trade.
 
 ### Multi-Timeframe Summary Table
 
-| Timeframe | EMA (period) | Price vs EMA | RSI | VWAP | Volume vs Avg | Nearest S/R | FVG Status | Weight | Bias |
-|---|---|---|---|---|---|---|---|---|---|
-| Daily | 200 | above/below | value | — | — | level (type) | — | x1 | Bullish/Bearish |
-| 4H | 50 | above/below | value | — | — | level (type) | zone | x1 | Bullish/Bearish |
-| 1H | 50 | above/below | value | above/below | high/avg/low | level (type) | zone | x2 | Bullish/Bearish |
-| 30m | 21 | above/below | value | above/below | high/avg/low | level (type) | zone | x2 | Bullish/Bearish |
-| 15m | 21 | above/below | value | above/below | high/avg/low | level (type) | zone | x3 | Bullish/Bearish |
-| 5m | 9 | above/below | value | above/below | high/avg/low | level (type) | zone | x3 | Bullish/Bearish |
+| Timeframe | EMA (period) | Price vs EMA | VWAP | Volume vs Avg | Nearest S/R | FVG Status | Weight | Bias |
+|---|---|---|---|---|---|---|---|---|
+| Daily | 200 | above/below | — | — | level (type) | — | x1 | Bullish/Bearish |
+| 4H | 50 | above/below | — | — | level (type) | zone | x1 | Bullish/Bearish |
+| 1H | 50 | above/below | above/below | high/avg/low | level (type) | zone | x2 | Bullish/Bearish |
+| 30m | 21 | above/below | above/below | high/avg/low | level (type) | zone | x2 | Bullish/Bearish |
+| 15m | 21 | above/below | above/below | high/avg/low | level (type) | zone | x3 | Bullish/Bearish |
+| 5m | 9 | above/below | above/below | high/avg/low | level (type) | zone | x3 | Bullish/Bearish |
 
 ### Decision Matrix — Weighted by Relevance to Scalp
 
