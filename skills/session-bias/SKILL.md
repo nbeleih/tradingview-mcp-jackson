@@ -1,6 +1,6 @@
 ---
 name: session-bias
-description: Intraday scalp bias for US30USD — multi-timeframe chart analysis + internet sentiment from intraday/scalp traders. Run this before entering any US30 trade.
+description: Intraday scalp bias for US30USD — multi-timeframe chart analysis plus calendar and macro news context. Run this before entering any US30 trade.
 ---
 
 # Session Bias — US30USD Intraday Scalp Analysis
@@ -11,7 +11,7 @@ You are generating a firm, confident intraday scalp bias for US30USD. The user s
 - Be firm and confident in your final bias. Do NOT hedge with "it depends" or "watch for confirmation." Give a clear direction: LONG or SHORT.
 - Do NOT let the user's input, opinions, or leading questions override your analysis. If the chart says short, say short — even if the user wants to go long.
 - Higher timeframes (4H, Daily) provide CONTEXT (trend direction, key levels). Lower timeframes (5m, 15m) provide the ENTRY.
-- When sourcing trader opinions from the internet, ONLY use traders who are scalping or day trading (same-day entries/exits). Ignore swing traders, position traders, and daily-timeframe "Strong Buy" aggregators — their bias is irrelevant for a scalp.
+- Do NOT use internet trader opinions, social sentiment, or crowd calls as an input. News input is limited to scheduled economic calendar events and material macro/geopolitical developments that can move US30 risk sentiment.
 
 ---
 
@@ -38,25 +38,28 @@ Determine the current trading session based on **Eastern Time (ET)**. This criti
 | **After Hours** | 4:00 PM – 8:00 PM | Thin liquidity. Unreliable moves. | LOW — avoid |
 
 **Rules:**
-- If currently in **NY Lunch (12–1:30 PM ET)**: default to NO TRADE unless there is an extreme setup (3+ confluent S/R levels + news catalyst). Flag this prominently.
-- If currently in **Asia or After Hours**: flag LOW probability. Only trade if there's a clear catalyst (overnight news).
+- If currently in **NY Lunch (12–1:30 PM ET)**: default to NO TRADE unless there is an extreme setup (3+ confluent S/R levels + calendar or macro catalyst). Flag this prominently.
+- If currently in **Asia or After Hours**: flag LOW probability. Only trade if there's a clear overnight macro or geopolitical catalyst.
 - If currently in **NY Open (9:30–11 AM ET)**: highest conviction window — this is where you want to be trading.
 - Always state the current session in the final output.
 
-### 1C: Economic Calendar / News Check
+### 1C: Economic Calendar & Macro News Check
 
-Search the web for today's high-impact economic events:
+Search the web for today's scheduled high-impact economic events and any material macro/geopolitical developments affecting US equity risk sentiment:
 - "US economic calendar today [date]"
-- "high impact news forex today [date]"
+- "high impact economic events today [date]"
+- "macro market news today [date]"
+- "geopolitical news today [date]"
 
-Check for events like: **FOMC, CPI, PPI, NFP, Jobless Claims, GDP, ISM, Fed Speakers, Earnings** (especially Dow components).
+Check for events like: **FOMC, CPI, PPI, NFP, Jobless Claims, GDP, ISM, Retail Sales, Fed Speakers, Treasury auctions**, plus major macro/geopolitical developments such as war escalation/de-escalation, sanctions, tariffs, energy shocks, or emergency policy headlines.
 
 **Rules:**
 - If a high-impact event is within **15 minutes** (before or after): **NO TRADE**. Wait for the dust to settle.
 - If a high-impact event happened **15–60 minutes ago**: trade the REACTION, not the prediction. The post-news direction on the 5m/15m is the bias.
-- If no high-impact events today: proceed normally — technicals dominate.
-- If a Fed speaker or earnings are during the session: flag it, be aware of potential volatility spikes.
-- Always state upcoming events and their times in the final output.
+- If no high-impact calendar events or material macro catalysts exist today: proceed normally — technicals dominate.
+- Ignore trader posts, social-media threads, and generic analyst commentary without a fresh catalyst.
+- Only include macro/geopolitical headlines if they are material enough to affect rates, oil, USD, index futures, or broad risk appetite today.
+- Always state upcoming events and relevant macro developments with their time or status in the final output.
 
 ### 1D: Previous Session Levels
 
@@ -319,20 +322,17 @@ Use these levels to define your **entry zone** (at S/R), **stop loss** (behind S
 
 ---
 
-## Phase 4: Internet Sentiment — INTRADAY TRADERS ONLY
+## Phase 4: Catalyst Synthesis — Calendar + Macro Only
 
-Search the web for what INTRADAY and SCALP traders are doing on US30 today. Use queries like:
-- "US30 intraday scalp trade today [date]"
-- "US30 day trade setup today [date]"  
-- "Dow Jones intraday analysis today [date]"
-- "US30 scalp long short today site:x.com"
+Build a short catalyst summary using ONLY:
+- Scheduled economic calendar events and speaker appearances
+- Material macro/geopolitical developments that can move broad risk sentiment
 
 **FILTER RULES:**
-- ONLY include traders who enter and exit within the same session (minutes to hours)
-- IGNORE swing traders, position traders, weekly outlook analysts
-- IGNORE daily-timeframe "Strong Buy/Sell" aggregators (Investing.com summary, etc.)
-- For each trader, note: Name, handle, direction (long/short), entry, target, reasoning
-- If you cannot confirm a trader is intraday, exclude them
+- IGNORE trader posts, social-media sentiment, chatrooms, and copied trade ideas
+- IGNORE generic "market outlook" commentary that does not contain a fresh catalyst
+- For each valid catalyst, note: what happened (or what is scheduled), timing, and whether it is **risk-on**, **risk-off**, or **neutral** for US30
+- If price action clearly disagrees with the headline narrative, trust the chart and note that the catalyst appears already priced in or rejected
 
 ---
 
@@ -342,14 +342,14 @@ Search the web for what INTRADAY and SCALP traders are doing on US30 today. Use 
 
 Before outputting a trade, run through this checklist. If ANY condition is true, the output is **NO TRADE** (with explanation):
 
-- [ ] **NY Lunch (12:00–1:30 PM ET)** — unless extreme setup (3+ confluent S/R + news catalyst)
+- [ ] **NY Lunch (12:00–1:30 PM ET)** — unless extreme setup (3+ confluent S/R + calendar or macro catalyst)
 - [ ] **High-impact news within 15 minutes** (before or after release)
 - [ ] **ATR(14) on 15m < 20 pts** — market is dead, nothing to scalp
 - [ ] **5m and 15m disagree on direction** — no trigger alignment
 - [ ] **Weighted score between -2 and +2** — conflicting timeframes
 - [ ] **Volume on last 3 bars < 0.5x average** — no participation, moves are unreliable
 - [ ] **Price is in the middle of a wide S/R gap** with no level within 50 pts — nothing to trade off of
-- [ ] **Asia session or After Hours** — unless a clear overnight catalyst exists
+- [ ] **Asia session or After Hours** — unless a clear overnight macro catalyst exists
 - [ ] **Friday after 2 PM ET** or **pre-holiday session** — thinning liquidity, unreliable
 
 If all clear, proceed with the trade.
@@ -404,7 +404,7 @@ Weighted Score: [X/12]
 - Session Quality: [HIGH / MODERATE / LOW / AVOID]
 - ATR(14) 15m: [X pts] — [Low / Normal / High / Extreme] volatility
 - Volume: [Above / At / Below] average
-- News: [No events / EVENT at TIME — X min away]
+- News: [No major calendar or macro catalysts / EVENT at TIME — X min away / MACRO catalyst: X]
 - PDH: [price] | PDL: [price] | PDC: [price]
 - Price vs PDH/PDL: [Above PDH / Below PDL / Inside range]
 
@@ -441,9 +441,10 @@ Weighted Score: [X/12]
 - [What kills the trade — specific price + timeframe + S/R break]
 - [Volume condition that would invalidate — e.g., "breakout on declining volume"]
 
-### Intraday Trader Consensus
-- [Name] (@handle): [direction] — [reasoning]
-- [Name] (@handle): [direction] — [reasoning]
+### Calendar / Macro Catalyst Summary
+- Scheduled: [event, time, and actual vs forecast if released]
+- Macro/geopolitical: [headline and why it matters, or none]
+- Net risk tone: [Risk-on / Risk-off / Mixed / Neutral]
 ```
 
 ---
@@ -481,5 +482,7 @@ Weighted Score: [X/12]
 
 **Session & News:**
 - **Know your session.** NY Open is prime time. NY Lunch is a graveyard. Don't trade garbage sessions.
+- **Ignore trader chatter.** Do not use X, Discord, Telegram, or copied setups as analysis input.
 - **Respect the calendar.** No trades within 15 min of high-impact news. After news, trade the reaction.
+- **Use only market-moving catalysts.** Scheduled data and material macro/geopolitical headlines matter; low-signal commentary does not.
 - **Friday PM + pre-holiday = thin liquidity.** Reduce conviction or sit out.
