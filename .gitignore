@@ -5,3 +5,5 @@ temp_*
 *.log
 discovery-log.json
 .DS_Store
+.discord-webhook
+bias-reports/
