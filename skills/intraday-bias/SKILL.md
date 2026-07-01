@@ -42,7 +42,7 @@ Run the **entire workflow (Phases 1–5) once per instrument**, in this order:
 3. `chart_get_state` — confirm the symbol loaded and list indicators already on it
 4. `quote_get` — real-time price snapshot
 5. `symbol_info` — instrument metadata (exchange, type, session, tick size). Confirm the **native unit** (index points) and what a "normal" move looks like for *this* instrument — US30 and NAS100 differ a lot.
-6. `draw_list` — **snapshot the drawings already on this symbol and record their IDs.** These are the user's own lines — you must never remove them later.
+6. `draw_list` — **snapshot the drawings already on this symbol and record their IDs.** Treat these as the user's own lines and never remove them — **with one exception:** horizontal lines this skill drew on a prior run, labeled exactly `PDH`, `PDL`, or `PDC`, are stale (previous-day levels change daily) and get refreshed in Phase 1D. Everything else stays.
 
 Both are US index CFDs, so the US economic calendar (Phase 1C) drives both, and VWAP/session levels are meaningful for each.
 
@@ -90,7 +90,9 @@ Pull the Daily OHLCV and read the **second-to-last completed bar** (yesterday):
 | **PDC** (prev day close) | 2nd-to-last bar `close` |
 | **Overnight High / Low** | Extremes since yesterday's close (from 1H/4H overnight bars) |
 
-**Draw PDH and PDL on the chart now** with `draw_shape` `horizontal_line` (label them "PDH" and "PDL"), using the **purple** previous-day color: `overrides: '{"linecolor": "#9c27b0", "linewidth": 2}'`. Record the returned drawing IDs so cleanup only ever touches lines this skill created. (You may also draw PDC in the same purple if useful.)
+**First clear stale previous-day lines, then draw fresh ones.** PDH/PDL/PDC change every day, so old ones must not stack up: from the Phase 1A `draw_list` snapshot, `draw_remove_one` on any horizontal line labeled `PDH`, `PDL`, or `PDC` (these are the skill's own from a prior run — never remove differently-labeled user lines).
+
+**Then draw PDH and PDL** with `draw_shape` `horizontal_line` (label them "PDH" and "PDL"), using the **purple** previous-day color: `overrides: '{"linecolor": "#9c27b0", "linewidth": 2}'`. Record the returned drawing IDs. (Draw PDC in the same purple too if useful.)
 
 - Price **above PDH** = breakout, bullish lean, PDH flips to support.
 - Price **below PDL** = breakdown, bearish lean, PDL flips to resistance.
@@ -195,6 +197,13 @@ Below, **PRIMARY** = the index being analyzed, **PEER** = the correlated one you
 - SMT is a **confirmation tool, not a standalone trigger** — it raises or lowers confidence around the 1H trigger, it does not replace it.
 - If SMT **contradicts** the 1H bias (e.g. bias is LONG but a bearish SMT just printed at resistance), lower confidence one level or lean **DEPENDS**.
 - Always report which index led, which failed, at what level, and on what timeframe.
+
+**Also mark PDH/PDL on the SPX500USD chart.** SPX is the SMT reference, so keep its previous-day levels drawn and current:
+1. Get SPX500USD's previous-day high and low from its **Daily** OHLCV (the 2nd-to-last completed bar) — via `batch_run` `get_ohlcv` on the Daily, or read it after switching.
+2. `chart_set_symbol` to `OANDA:SPX500USD`, then `draw_list` on it.
+3. **Remove any stale previous-day lines** there: `draw_remove_one` on horizontal lines labeled `PDH`/`PDL` (the skill's own from a prior run) — never touch the user's other SPX lines.
+4. Draw the fresh **PDH** and **PDL** with `draw_shape` `horizontal_line`, labeled, in the purple previous-day color (`overrides: '{"linecolor": "#9c27b0", "linewidth": 2}'`).
+5. `chart_set_symbol` back to `OANDA:NAS100USD` to finish the pass.
 
 ---
 
@@ -305,6 +314,7 @@ Confidence: [HIGH / MODERATE / LOW]   Weighted Score: [X/7]
 - **Broken levels flip.** Track them.
 - **Mark PDH/PDL and all key S/R on the chart, and LEAVE them there after the scan** — they're what the user trades off. Never delete your own S/R lines in cleanup, and never touch the user's pre-existing lines.
 - **Line colors: orange = resistance, blue = support, purple = previous-day levels. Never base red or green.**
+- **Refresh previous-day lines each run.** Up front, delete the skill's own stale `PDH`/`PDL`/`PDC` lines (they change daily) before redrawing — on US30, NAS100, **and the SPX500USD chart**. This is the one exception to "never remove your own lines," and it happens at the start, not in cleanup; user-drawn lines are still never touched.
 - **On NAS100USD or SPX500USD, check SMT against the other.** Bearish SMT at the highs / bullish SMT at the lows is strong reversal confirmation — but it confirms the 1H trigger, it doesn't replace it.
 - **Two instruments, two independent reads.** Analyze US30USD and NAS100USD in full each run. Never share levels or ATR numbers between them — they trade on very different point scales. A divergence between the two calls is itself a signal (flag it in the Combined read).
 - **Respect 8:30 ET.** It's the prime US data slot — check the calendar before any pre-market position.
