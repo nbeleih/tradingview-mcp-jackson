@@ -1,6 +1,6 @@
 ---
 name: intraday-bias
-description: Intraday directional bias for OANDA US30USD and NAS100USD — runs the full analysis on BOTH instruments every time. Daily/4H context down to a 1H entry (with optional 15m fill-timing), plus a light economic-calendar flag, ending in a firm LONG / SHORT / DEPENDS call with a trade plan for each. Run before the session (e.g. ~8:30am ET) to know where price is most likely heading next.
+description: Intraday directional bias for OANDA US30USD and NAS100USD — runs the full analysis on BOTH instruments every time. Daily/4H context down to a 1H entry (with optional 15m fill-timing), plus a light economic-calendar flag, ending in a firm LONG / SHORT / DEPENDS call with a trade plan for each. Run pre-market (~8:30am ET) to build the baseline, then re-run any time after (post-open, post-news, midday) for an UPDATE that reconciles against the earlier call and shows how it's playing out.
 ---
 
 # Intraday Bias — Where Is Price Heading Next?
@@ -22,6 +22,13 @@ Run the **entire workflow (Phases 1–5) once per instrument**, in this order:
 - After both passes, present **two separate bias reports** plus a one-line **Combined read** noting whether the two agree (both risk-on / both risk-off) or diverge (one long, one short — a caution flag, since these indices usually move together).
 - These two symbols are the fixed scope of this skill; ignore whatever was on the chart when it was launched.
 
+### Run modes — BASELINE vs UPDATE
+This skill is built to be run **several times a day**. Phase 0 decides the mode:
+- **BASELINE** — the first run of the day (typically pre-market, ~8:30 ET). Build the bias from scratch; write the day's log.
+- **UPDATE** — any later run (post-open, post-news, midday). Re-derive the *current* bias **and reconcile it against the day's earlier run(s)**: did the DEPENDS resolve, did the trigger fire, did price hit the stop / T1 / invalidation? Every run is logged to a daily file so the next one — even in a brand-new chat — can pick up the thread.
+
+State at the top of the output which mode this is (and, for an update, the prior run's time).
+
 **CRITICAL RULES:**
 - Be firm. End with a clear read: **LONG**, **SHORT**, or **DEPENDS**. DEPENDS is a real, allowed answer for a genuinely two-sided chart — but it is NOT vague hedging. When you say DEPENDS you MUST give the exact condition that resolves it (e.g. "LONG on a 1H close above X; SHORT on a 1H close below Y").
 - Do NOT let the user's opinions or leading questions override the chart. If the chart says short, say short.
@@ -31,6 +38,18 @@ Run the **entire workflow (Phases 1–5) once per instrument**, in this order:
 - News input is limited to the **scheduled economic calendar**. Do NOT use trader opinions, social sentiment, or crowd calls.
 
 ---
+
+## Phase 0: Continuity Check (once per run, before Phase 1)
+
+Decide **BASELINE vs UPDATE** and load any earlier context for today:
+
+1. Get the current **ET date and time** — the date is the log filename; the time sets the session and tells you how many 1H bars have closed since any prior run.
+2. Read today's log: **`intraday-bias-logs/<YYYY-MM-DD>.md`** (ET date, relative to the repo root).
+   - **Missing / no run yet today** → this is the **BASELINE** run. Create the `intraday-bias-logs/` folder if it doesn't exist (you write the file in Phase 6).
+   - **Exists** → this is an **UPDATE** run. Load, per symbol, the most recent run's **call** (LONG/SHORT/DEPENDS), **confidence**, **resolving level / trigger**, **entry**, **stop**, **T1/T2**, **invalidation**, and its timestamp.
+3. Carry those prior levels forward — you grade them in Phase 4's *Reconcile the prior call* step and reference them in the output header. On a BASELINE run there's nothing to reconcile.
+
+*(This is separate from the `chart_get_state` at the start of Phase 1 that records the active symbol for restore.)*
 
 ## Phase 1: Load the Instrument & Context
 
@@ -209,6 +228,15 @@ Below, **PRIMARY** = the index being analyzed, **PEER** = the correlated one you
 
 ## Phase 4: Compile the Bias & Trade Plan
 
+### Reconcile the prior call — UPDATE runs only
+If Phase 0 loaded an earlier run today, grade it **before** writing the new bias, using only **closed 1H bars** since that run (per symbol):
+- **Resolving level / trigger hit?** A *closed* 1H bar through the prior DEPENDS level means it has **resolved** — state which way, and carry that into today's read.
+- **Stop / invalidation hit?** The prior thesis is **dead** — say so plainly; don't quietly re-issue it.
+- **T1 / T2 reached?** The prior trade **worked** — note it, and whether it's still live or done.
+- **Scheduled event printed since the last run?** (Phase 1C) Fold in the **actual result and the reaction** — the post-news 1H direction leads the read now.
+
+Then issue the updated call, which may **confirm, upgrade, downgrade, or flip** the prior one, and surface the reconciliation in the output header (below). On a BASELINE run, skip this section.
+
 ### When the read is DEPENDS (conditional)
 The call is **DEPENDS** — a two-sided conditional rather than a single direction — when any of these hold. In that case, name the exact level whose 1H close resolves it, and give both scenarios.
 - **1H is ranging** with no clean structure or closed trigger — direction resolves on the range break.
@@ -245,12 +273,13 @@ Range −7 … +7.
 Lead with the combined read, then one full block per instrument (US30USD, then NAS100USD).
 
 ```
-# INTRADAY BIAS — [date, current session]
+# INTRADAY BIAS — [date, current session] — [BASELINE | UPDATE (prior run HH:MM ET)]
 Combined read: [US30 and NAS100 both LONG → risk-on tape | both SHORT → risk-off | DIVERGENT: US30 [x] / NAS100 [y] — caution, indices disagree]
 
 ═══════════════════════════════════════
 ## INTRADAY BIAS — [SYMBOL]: [LONG / SHORT / DEPENDS]
 Confidence: [HIGH / MODERATE / LOW]   Weighted Score: [X/7]
+Update (UPDATE runs only): Prior [HH:MM ET] [call + level] → Since: [what price did on closed 1H bars — trigger / stop / T1] → Now: [confirm / upgrade / downgrade / flip]
 
 ### Context
 - Symbol / Instrument: [ticker — type, native unit]
@@ -304,6 +333,27 @@ Confidence: [HIGH / MODERATE / LOW]   Weighted Score: [X/7]
 
 ---
 
+## Phase 6: Log the Run (persist for the next run)
+
+After presenting the reports, **append** this run to **`intraday-bias-logs/<YYYY-MM-DD>.md`** (ET date; create the file on the BASELINE run). This file is read by the *next* run's Phase 0 — keep it terse and scannable, not prose. Append in order; **never overwrite** — the day's file accumulates the baseline plus every update.
+
+Write, per run:
+- A header line: `## <HH:MM ET> — <BASELINE | UPDATE>` (+ session name).
+- One line per symbol: call, confidence, resolving level / trigger, entry, stop, T1/T2, and SMT (NAS100 only).
+- On UPDATE runs, a `since:` note per symbol — how the prior call played out (trigger / stop / T1 hit).
+
+Example (indented so it needs no code fences; the file itself is plain markdown):
+
+    ## 08:32 ET — BASELINE (pre-market)
+    US30USD: DEPENDS-bullish | LONG >52,394 | stop 52,270 | T1 52,512 | VWAP 52,286
+    NAS100USD: DEPENDS | pivot 30,000 (short <30,000 / long reclaim 30,143) | SMT bullish @ lows
+
+    ## 10:05 ET — UPDATE (NY Open)
+    US30USD: LONG (MOD) | since: 9:00 bar swept PDL 52,129, closed 52,380 → resolved LONG | T1 52,446 T2 52,512 | stop 52,230
+    NAS100USD: DEPENDS | since: swept <30,000 to 29,944, no 1H close below → still two-sided | watch 30,143 reclaim
+
+---
+
 ## REMINDERS
 - **The 1H is the anchor.** Bias, setup, and trigger all live there. Daily/4H are context; 15m only times the fill. Don't let sub-1H noise talk you out of a valid 1H trigger.
 - **Wait for the 1H close.** A trigger candle that's still forming is not a trigger. Don't act on a wick.
@@ -319,4 +369,4 @@ Confidence: [HIGH / MODERATE / LOW]   Weighted Score: [X/7]
 - **Two instruments, two independent reads.** Analyze US30USD and NAS100USD in full each run. Never share levels or ATR numbers between them — they trade on very different point scales. A divergence between the two calls is itself a signal (flag it in the Combined read).
 - **Respect 8:30 ET.** It's the prime US data slot — check the calendar before any pre-market position.
 - **Be direct.** "SHORT at [x], stop [x], target [x]." Not "consider watching for potential weakness."
-```
+- **Every run is baseline or update.** Phase 0 reads `intraday-bias-logs/<date>.md` first; Phase 6 writes back to it. On an update, reconcile the earlier call (did it trigger / stop / hit T1?) before issuing the new one — never just re-issue a standalone read.
