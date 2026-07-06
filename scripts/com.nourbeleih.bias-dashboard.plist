@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for the LIVE bias dashboard server (http://localhost:8787).
+
+  Install / start:
+    cp scripts/com.nourbeleih.bias-dashboard.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.nourbeleih.bias-dashboard.plist
+
+  RunAtLoad starts it immediately (and on login/reboot); KeepAlive restarts it if it
+  ever crashes — so the dashboard is always reachable in the background.
+
+  Uninstall / stop:
+    launchctl unload ~/Library/LaunchAgents/com.nourbeleih.bias-dashboard.plist
+    rm ~/Library/LaunchAgents/com.nourbeleih.bias-dashboard.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nourbeleih.bias-dashboard</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/nourmendoza/Repos/DT/tradingview-mcp-jackson/scripts/run-dashboard-server.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/nourmendoza/.claude/local:/Users/nourmendoza/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>BIAS_DASH_PORT</key>
+        <string>8787</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nourmendoza/Repos/DT/tradingview-mcp-jackson/bias-reports/dashboard-server.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nourmendoza/Repos/DT/tradingview-mcp-jackson/bias-reports/dashboard-server.err.log</string>
+</dict>
+</plist>

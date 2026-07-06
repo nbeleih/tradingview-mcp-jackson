@@ -15,7 +15,7 @@
 //
 // Run standalone anytime:  node scripts/bias-dashboard.mjs   (then: open bias-reports/dashboard.html)
 
-import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync, realpathSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
@@ -36,6 +36,11 @@ const REFRESH_SEC = 60;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
 const listSafe = (d) => { try { return readdirSync(d); } catch { return []; } };
+const humanDur = (secs) => {
+  secs = Math.max(0, Math.floor(secs));
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+  return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
+};
 
 function etNow() {
   const d = new Date();
@@ -128,6 +133,26 @@ function launchd() {
   } catch { return { loaded: false }; }
 }
 
+// Is a bias run executing right now? Authoritative = a live runner process; fallback =
+// a fresh 'running' state file for today.
+function runningNow(now, stateMap) {
+  let proc = false;
+  try { proc = !!execSync("pgrep -fl 'run-intraday-bias\\.sh' 2>/dev/null || true", { encoding: 'utf8' }).trim(); } catch {}
+  let slot = '';
+  for (const s of SLOTS) {
+    const st = stateMap[`${s.id}-${now.dateISO}`];
+    if (st?.status === 'running' && now.epoch - st.epoch < 1500) slot = s.id;
+  }
+  return { active: proc || !!slot, proc, slot, since: slot ? epochET(stateMap[`${slot}-${now.dateISO}`].epoch) : '' };
+}
+
+// Compact machine-readable status for the server's /health endpoint.
+export function status() {
+  const now = etNow();
+  const stateMap = stateFiles();
+  return { ok: true, etDate: now.dateISO, etTime: now.hm, running: runningNow(now, stateMap), launchd: launchd() };
+}
+
 // ---------- status logic ----------
 function slotStatus(date, slot, ctx) {
   const st = ctx.stateMap[`${slot.id}-${date}`];
@@ -218,7 +243,7 @@ function historyRows(dates, ctx) {
   }).join('');
 }
 
-function render() {
+export function render({ live = false, serverStart = null } = {}) {
   const now = etNow();
   const stateMap = stateFiles();
   const ctx = { now, stateMap };
@@ -229,6 +254,14 @@ function render() {
   const lastCheck = lastFire ? lastFire.tsET : '—';
   const feedEvents = allEvents.filter((e) => e.kind !== 'skip').slice(-12).reverse();
   const ld = launchd();
+  const run = runningNow(now, stateMap);
+  const refresh = live ? 12 : REFRESH_SEC;
+  const liveHtml = live
+    ? `<span class="pill live">● LIVE</span> <span class="dim">server up ${esc(serverStart ? humanDur(now.epoch - serverStart) : '')}</span>`
+    : '';
+  const runBanner = run.active
+    ? `<div class="banner run"><span class="pulse"></span> <b>A bias run is executing right now.</b>${run.slot ? ` ${esc(run.slot.replace(/(\d\d)(\d\d)/, '$1:$2'))} slot, started ${esc(run.since)}.` : ''} Takes a few minutes; the result posts here when done.</div>`
+    : '';
 
   const ldHtml = ld.loaded
     ? `<span class="pill ${ld.lastExit === '0' ? 'ok' : 'bad'}">launchd ✓ loaded</span>
@@ -242,7 +275,7 @@ function render() {
 
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="${REFRESH_SEC}">
+<meta http-equiv="refresh" content="${refresh}">
 <title>Intraday-Bias Dashboard</title>
 <style>
   :root{color-scheme:dark}
@@ -297,6 +330,12 @@ function render() {
   .ev.error .b{color:#f85149}
   .legend{font-size:11.5px;color:#6e7681;margin-top:8px}
   footer{margin-top:30px;color:#4d5560;font-size:11px;text-align:center}
+  .pill.live{background:#0d2440;color:#58a6ff;border:1px solid #1f4f7a}
+  .banner{margin:14px 0 0;padding:10px 14px;border-radius:10px;font-size:13px;background:#0f2033;border:1px solid #1f4f7a;color:#cfe3ff}
+  .banner.run b{color:#e6edf3}
+  .pulse{display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fb950;animation:pulse 1.5s infinite;vertical-align:middle;margin-right:5px}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,.6)}70%{box-shadow:0 0 0 8px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+  #cd{color:#8b949e}
 </style></head><body><div class="wrap">
 
   <header class="top">
@@ -305,11 +344,13 @@ function render() {
       <div class="dim">US30USD + NAS100USD · scheduled to Discord · checks every 15 min</div>
     </div>
     <div class="meta">
-      <div class="clock">${esc(now.pretty)} · ${esc(now.hm)} ET</div>
+      <div class="clock"><span id="liveclock">${esc(now.hm)} ET</span> · ${esc(now.pretty)}</div>
+      ${live ? `<div class="dim">${liveHtml}</div>` : ''}
       <div class="dim">${ldHtml}</div>
-      <div class="dim">next run: ${esc(nextRunText(now))} · last check ${esc(lastCheck)} · next ≈ ${esc(nextCheck)}</div>
+      <div class="dim">next run: ${esc(nextRunText(now))} · last check ${esc(lastCheck)} · next ≈ ${esc(nextCheck)}${live ? ' · reload <span id="cd"></span>' : ''}</div>
     </div>
   </header>
+  ${runBanner}
 
   <h2>Today — ${esc(now.dateISO)}${now.isWeekend ? ' (weekend — no runs)' : ''}</h2>
   <div class="grid">${todayCards}</div>
@@ -324,16 +365,28 @@ function render() {
   </table>
   <div class="legend">✅ posted&nbsp; 🔄 running&nbsp; ⏳ scheduled/due&nbsp; ⚠️ failed·retrying&nbsp; ❌ failed&nbsp; · no run &nbsp;|&nbsp; hover a chip for the full call</div>
 
-  <footer>generated ${esc(now.hm)} ET · auto-refreshes every ${REFRESH_SEC}s · regenerated on each scheduler fire</footer>
-</div></body></html>`;
+  <footer>${live ? 'live server' : 'generated ' + esc(now.hm) + ' ET'} · auto-refreshes every ${refresh}s${live ? '' : ' · regenerated on each scheduler fire'}</footer>
+</div>${live ? `<script>
+(function(){var R=${refresh};
+function tick(){var d=new Date();
+var et=new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d);
+var c=document.getElementById('liveclock');if(c)c.textContent=et+' ET';
+var cd=document.getElementById('cd');if(cd)cd.textContent=R+'s';
+if(R--<=0)location.reload();}
+setInterval(tick,1000);tick();})();
+</script>` : ''}</body></html>`;
 }
 
-try {
-  writeFileSync(OUT, render());
-  console.log(`dashboard -> ${OUT}`);
-} catch (e) {
-  const msg = esc(e && e.stack ? e.stack : String(e));
-  try { writeFileSync(OUT, `<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=30><body style="background:#0b0e14;color:#f85149;font-family:monospace;padding:20px"><h2>dashboard generation error</h2><pre>${msg}</pre></body>`); } catch {}
-  console.error('dashboard error:', e);
-  process.exit(1);
+// Write the static file only when run directly (not when imported by the server).
+const isMain = process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+if (isMain) {
+  try {
+    writeFileSync(OUT, render());
+    console.log(`dashboard -> ${OUT}`);
+  } catch (e) {
+    const msg = esc(e && e.stack ? e.stack : String(e));
+    try { writeFileSync(OUT, `<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=30><body style="background:#0b0e14;color:#f85149;font-family:monospace;padding:20px"><h2>dashboard generation error</h2><pre>${msg}</pre></body>`); } catch {}
+    console.error('dashboard error:', e);
+    process.exit(1);
+  }
 }
