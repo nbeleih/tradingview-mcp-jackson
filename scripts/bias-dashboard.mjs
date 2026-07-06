@@ -1,0 +1,339 @@
+#!/usr/bin/env node
+//
+// bias-dashboard.mjs — render a self-contained status dashboard for the scheduled
+// intraday-bias jobs into bias-reports/dashboard.html.
+//
+// Reads what the scheduler already writes — no new state:
+//   bias-reports/scheduler.log            (every 15-min fire: guard decision + outcome)
+//   bias-reports/.state-<slot>-<date>     (per-slot: running|posted|idle:<epoch>)
+//   bias-reports/intraday-bias-<date>-<slot>.md   (the saved report per run)
+//   intraday-bias-logs/<date>.md          (the skill's continuity log)
+//   launchctl                             (is the job loaded / last exit)
+//
+// The HTML auto-refreshes (meta refresh) and is regenerated on every launchd fire
+// by run-intraday-bias.sh, so leaving it open in a browser keeps it current.
+//
+// Run standalone anytime:  node scripts/bias-dashboard.mjs   (then: open bias-reports/dashboard.html)
+
+import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
+
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO = dirname(SCRIPT_DIR);
+const REPORTS = join(REPO, 'bias-reports');
+const LOGS = join(REPO, 'intraday-bias-logs');
+const OUT = join(REPORTS, 'dashboard.html');
+
+const SLOTS = [
+  { id: '0830', label: 'BASELINE', window: '08:30–09:59 ET', startMin: 8 * 60 + 30, endMin: 9 * 60 + 59 },
+  { id: '1000', label: 'UPDATE',   window: '10:00–11:30 ET', startMin: 10 * 60,      endMin: 11 * 60 + 30 },
+];
+const REFRESH_SEC = 60;
+
+// ---------- small helpers ----------
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const readSafe = (p) => { try { return readFileSync(p, 'utf8'); } catch { return ''; } };
+const listSafe = (d) => { try { return readdirSync(d); } catch { return []; } };
+
+function etNow() {
+  const d = new Date();
+  const dateISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  const hm = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+  const wd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(d);
+  const pretty = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(d);
+  const [H, M] = hm.split(':').map(Number);
+  return { epoch: Math.floor(d.getTime() / 1000), dateISO, hm, minutes: H * 60 + M, wd, isWeekend: wd === 'Sat' || wd === 'Sun', pretty };
+}
+
+// epoch (seconds) -> "Mon 09:51" in ET
+function epochET(epoch) {
+  if (!epoch) return '';
+  const d = new Date(epoch * 1000);
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+}
+
+// "[2026-07-06 09:36:09 EDT] ..." -> epoch seconds (ET offset from EDT/EST label)
+function parseLogTs(line) {
+  const m = line.match(/^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}) (\w+)\]/);
+  if (!m) return null;
+  const off = m[7] === 'EDT' ? '-04:00' : '-05:00';
+  const t = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}${off}`);
+  return Number.isNaN(t) ? null : Math.floor(t / 1000);
+}
+
+// ---------- gather state ----------
+function stateFiles() {
+  const map = {}; // "<slot>-<date>" -> {status, epoch}
+  for (const f of listSafe(REPORTS)) {
+    const m = f.match(/^\.state-(\d{4})-(\d{4}-\d{2}-\d{2})$/);
+    if (!m) continue;
+    const [status, epoch] = readSafe(join(REPORTS, f)).trim().split(':');
+    map[`${m[1]}-${m[2]}`] = { status, epoch: Number(epoch) || 0 };
+  }
+  return map;
+}
+
+function reportPath(date, slot) { return join(REPORTS, `intraday-bias-${date}-${slot}.md`); }
+
+// Parse a saved report into a compact summary.
+function parseReport(date, slot) {
+  const p = reportPath(date, slot);
+  const txt = readSafe(p);
+  if (!txt) return null;
+  const modeM = txt.match(/^#\s*INTRADAY BIAS\b.*?\b(BASELINE|UPDATE)\b/im);
+  const combM = txt.match(/^Combined read:\s*(.+)$/im);
+  const symbols = [];
+  const re = /^##\s*INTRADAY BIAS\s*[—-]\s*(?:OANDA:)?([A-Z0-9]+):\s*(.+)$/gim;
+  let m;
+  while ((m = re.exec(txt))) {
+    const sym = m[1];
+    const callFull = m[2].trim();
+    const call = (callFull.match(/\b(LONG|SHORT|DEPENDS)\b/i) || [, '?'])[1].toUpperCase();
+    // confidence: first "Confidence: X" after this header
+    const rest = txt.slice(re.lastIndex, re.lastIndex + 400);
+    const conf = (rest.match(/Confidence:\s*([A-Za-z/–-]+)/i) || [, ''])[1];
+    symbols.push({ sym, call, callFull, conf });
+  }
+  const combined = combM ? combM[1].replace(/\*\*/g, '').trim() : '';
+  const mode = modeM ? modeM[1].toUpperCase() : '';
+  return { path: `intraday-bias-${date}-${slot}.md`, mode, combined, symbols, raw: txt };
+}
+
+function parseSchedulerEvents(limit) {
+  const txt = readSafe(join(REPORTS, 'scheduler.log'));
+  const out = [];
+  for (const line of txt.split('\n')) {
+    const ts = parseLogTs(line);
+    if (ts == null) continue; // skip the non-timestamped "guard: ..." diagnostics
+    const body = line.replace(/^\[[^\]]+\]\s*/, '');
+    let kind = 'info';
+    if (/ERROR|post FAILED|no report produced|abort/i.test(body)) kind = 'error';
+    else if (/posted \+ success|REPOST ok/i.test(body)) kind = 'ok';
+    else if (/RUN: invoking claude|directive=RUN|directive=REPOST/i.test(body)) kind = 'run';
+    else if (/directive=SKIP/i.test(body)) kind = 'skip';
+    const slot = (body.match(/slot=(\d{4})/) || body.match(/\((\d{4})\)/) || [])[1] || '';
+    out.push({ ts, tsET: epochET(ts), body, kind, slot });
+  }
+  return limit ? out.slice(-limit).reverse() : out;
+}
+
+function launchd() {
+  try {
+    const line = execSync('launchctl list 2>/dev/null | grep -i intraday', { encoding: 'utf8' }).trim();
+    if (!line) return { loaded: false };
+    const [pid, exit] = line.split(/\s+/);
+    return { loaded: true, running: pid !== '-', pid, lastExit: exit };
+  } catch { return { loaded: false }; }
+}
+
+// ---------- status logic ----------
+function slotStatus(date, slot, ctx) {
+  const st = ctx.stateMap[`${slot.id}-${date}`];
+  const hasReport = existsSync(reportPath(date, slot.id));
+  const isToday = date === ctx.now.dateISO;
+
+  if (st?.status === 'posted' || (!isToday && hasReport && st?.status !== 'idle'))
+    return { key: 'posted', badge: '✅', text: 'Posted', cls: 'ok', at: epochET(st?.epoch) };
+  if (st?.status === 'running' && ctx.now.epoch - st.epoch < 1500)
+    return { key: 'running', badge: '🔄', text: 'Running…', cls: 'run', at: epochET(st.epoch) };
+  if (st?.status === 'idle') {
+    const canRetry = isToday && ctx.now.minutes <= slot.endMin && !ctx.now.isWeekend;
+    return canRetry
+      ? { key: 'retry', badge: '⚠️', text: 'Failed — retrying', cls: 'warn', at: epochET(st.epoch) }
+      : { key: 'failed', badge: '❌', text: 'Failed', cls: 'bad', at: epochET(st.epoch) };
+  }
+  // no state file for this slot/date
+  if (isToday) {
+    if (ctx.now.isWeekend) return { key: 'weekend', badge: '—', text: 'Weekend — no run', cls: 'muted' };
+    if (ctx.now.minutes < slot.startMin) return { key: 'pending', badge: '⏳', text: 'Scheduled', cls: 'pending' };
+    if (ctx.now.minutes <= slot.endMin) return { key: 'due', badge: '⏳', text: 'Due now', cls: 'pending' };
+    return { key: 'missed', badge: '⚠️', text: 'No run recorded', cls: 'warn' };
+  }
+  return hasReport
+    ? { key: 'posted', badge: '✅', text: 'Posted', cls: 'ok' }
+    : { key: 'none', badge: '·', text: 'No run', cls: 'muted' };
+}
+
+function nextRunText(now) {
+  if (now.isWeekend) return 'Mon 08:30 ET';
+  if (now.minutes < SLOTS[0].startMin) return 'today 08:30 ET';
+  if (now.minutes <= SLOTS[0].endMin) return 'in the 08:30 window now';
+  if (now.minutes < SLOTS[1].startMin) return 'today 10:00 ET';
+  if (now.minutes <= SLOTS[1].endMin) return 'in the 10:00 window now';
+  return 'tomorrow 08:30 ET';
+}
+
+function discoverDates(stateMap) {
+  const set = new Set();
+  for (const f of listSafe(REPORTS)) {
+    const m = f.match(/intraday-bias-(\d{4}-\d{2}-\d{2})-\d{4}\.md$/);
+    if (m) set.add(m[1]);
+  }
+  for (const k of Object.keys(stateMap)) set.add(k.slice(5));
+  for (const f of listSafe(LOGS)) { const m = f.match(/^(\d{4}-\d{2}-\d{2})\.md$/); if (m) set.add(m[1]); }
+  return [...set].sort().reverse();
+}
+
+// ---------- render ----------
+function callChip(s) {
+  const cls = s.call === 'LONG' ? 'long' : s.call === 'SHORT' ? 'short' : 'depends';
+  const conf = s.conf ? ` <span class="conf">${esc(s.conf)}</span>` : '';
+  return `<span class="sym">${esc(s.sym.replace('USD', ''))}</span> <span class="call ${cls}">${esc(s.call)}</span>${conf}`;
+}
+
+function slotCard(date, slot, ctx) {
+  const s = slotStatus(date, slot, ctx);
+  const rep = (s.key === 'posted' || s.key === 'running') ? parseReport(date, slot.id) : null;
+  const calls = rep?.symbols?.length
+    ? `<div class="calls">${rep.symbols.map((x) => `<div class="callrow">${callChip(x)}<div class="callfull">${esc(x.callFull)}</div></div>`).join('')}</div>`
+    : `<div class="empty">${s.key === 'pending' ? `Scheduled for ${slot.window}` : s.key === 'due' ? 'Window open — awaiting the next 15-min fire' : 'No report'}</div>`;
+  const combined = rep?.combined ? `<div class="combined">${esc(rep.combined)}</div>` : '';
+  const details = rep?.raw
+    ? `<details><summary>view full report</summary><pre>${esc(rep.raw)}</pre></details>`
+    : '';
+  const at = s.at ? `<span class="at">${esc(s.at)}</span>` : '';
+  return `<section class="card ${s.cls}">
+    <header><div class="slot">${slot.id.replace(/(\d\d)(\d\d)/, '$1:$2')} <span class="tag">${slot.label}</span></div>
+      <div class="status ${s.cls}">${s.badge} ${esc(s.text)} ${at}</div></header>
+    ${combined}${calls}${details}
+  </section>`;
+}
+
+function historyRows(dates, ctx) {
+  return dates.map((date) => {
+    const cells = SLOTS.map((slot) => {
+      const s = slotStatus(date, slot, ctx);
+      const rep = s.key === 'posted' ? parseReport(date, slot.id) : null;
+      const calls = rep?.symbols?.map((x) => {
+        const cls = x.call === 'LONG' ? 'long' : x.call === 'SHORT' ? 'short' : 'depends';
+        return `<span class="mini ${cls}" title="${esc(x.sym)}: ${esc(x.callFull)}">${esc(x.sym.replace('USD', ''))} ${esc(x.call)}</span>`;
+      }).join(' ') || '';
+      const link = rep ? ` <a href="${esc(rep.path)}">md</a>` : '';
+      return `<td class="${s.cls}"><span class="b">${s.badge}</span> ${calls}${link}</td>`;
+    }).join('');
+    const isToday = date === ctx.now.dateISO;
+    return `<tr${isToday ? ' class="today"' : ''}><th>${esc(date)}${isToday ? ' <span class="tag">today</span>' : ''}</th>${cells}</tr>`;
+  }).join('');
+}
+
+function render() {
+  const now = etNow();
+  const stateMap = stateFiles();
+  const ctx = { now, stateMap };
+  const dates = discoverDates(stateMap);
+  const allEvents = parseSchedulerEvents();
+  const lastFire = allEvents[allEvents.length - 1];
+  const nextCheck = lastFire ? epochET(lastFire.ts + 900) : '~15 min';
+  const lastCheck = lastFire ? lastFire.tsET : '—';
+  const feedEvents = allEvents.filter((e) => e.kind !== 'skip').slice(-12).reverse();
+  const ld = launchd();
+
+  const ldHtml = ld.loaded
+    ? `<span class="pill ${ld.lastExit === '0' ? 'ok' : 'bad'}">launchd ✓ loaded</span>
+       <span class="dim">last exit ${esc(ld.lastExit)}${ld.running ? ` · running pid ${esc(ld.pid)}` : ''}</span>`
+    : `<span class="pill bad">launchd ✗ not loaded</span>`;
+
+  const todayCards = SLOTS.map((slot) => slotCard(now.dateISO, slot, ctx)).join('');
+  const feed = feedEvents.map((e) => `<div class="ev ${e.kind}"><span class="t">${esc(e.tsET)}</span> <span class="b">${esc(e.body)}</span></div>`).join('') || '<div class="dim">no runs logged yet</div>';
+  const past = dates.filter((d) => d !== now.dateISO);
+  const hist = historyRows([now.dateISO, ...past], ctx);
+
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="${REFRESH_SEC}">
+<title>Intraday-Bias Dashboard</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:#0b0e14;color:#c9d1d9;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 18px 60px}
+  h1{font-size:19px;margin:0 0 2px;letter-spacing:.2px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:1.4px;color:#8b949e;margin:26px 0 10px;font-weight:600}
+  header.top{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 14px;border-bottom:1px solid #21262d;padding-bottom:14px}
+  .clock{font-variant-numeric:tabular-nums;color:#e6edf3;font-weight:600}
+  .dim{color:#6e7681;font-size:12.5px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .pill.ok{background:#12261a;color:#3fb950;border:1px solid #1f6f34}
+  .pill.bad{background:#2b1416;color:#f85149;border:1px solid #7d2a2a}
+  .meta{margin-left:auto;text-align:right}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:680px){.grid{grid-template-columns:1fr}}
+  .card{background:#0f141c;border:1px solid #21262d;border-radius:12px;padding:14px 15px;border-left:4px solid #30363d}
+  .card.ok{border-left-color:#3fb950}.card.pending{border-left-color:#58a6ff}.card.run{border-left-color:#d29922}
+  .card.warn{border-left-color:#d29922}.card.bad{border-left-color:#f85149}.card.muted{border-left-color:#30363d}
+  .card header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;border:0;padding:0;margin-bottom:8px}
+  .slot{font-size:16px;font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+  .tag{font-size:10px;font-weight:700;letter-spacing:.8px;color:#8b949e;background:#1c2330;padding:2px 6px;border-radius:5px;vertical-align:middle}
+  .status{font-size:12.5px;font-weight:600}
+  .status.ok{color:#3fb950}.status.pending{color:#58a6ff}.status.run{color:#d29922}.status.warn{color:#d29922}.status.bad{color:#f85149}.status.muted{color:#6e7681}
+  .at{color:#6e7681;font-weight:400}
+  .combined{font-size:12.5px;color:#adbac7;background:#0b0f16;border:1px solid #1c2330;border-radius:7px;padding:7px 9px;margin:6px 0 10px}
+  .calls{display:flex;flex-direction:column;gap:8px}
+  .callrow{border-top:1px solid #1c2330;padding-top:7px}
+  .callrow:first-child{border-top:0;padding-top:0}
+  .sym{font-weight:700;color:#e6edf3;font-size:13px}
+  .call{font-weight:700;font-size:12px;padding:1px 7px;border-radius:5px;margin-left:2px}
+  .call.long{background:#0f2a19;color:#3fb950}.call.short{background:#2b1416;color:#f85149}.call.depends{background:#2a2411;color:#d29922}
+  .conf{color:#8b949e;font-size:11px;font-weight:600}
+  .callfull{color:#8b949e;font-size:11.5px;margin-top:3px}
+  .empty{color:#6e7681;font-size:12.5px;font-style:italic}
+  details{margin-top:10px}summary{cursor:pointer;color:#58a6ff;font-size:12px}
+  pre{white-space:pre-wrap;background:#0b0f16;border:1px solid #1c2330;border-radius:7px;padding:10px;font-size:11.5px;color:#adbac7;max-height:340px;overflow:auto;margin:8px 0 0}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #1c2330;vertical-align:top}
+  thead th{color:#8b949e;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.8px}
+  tbody th{font-weight:600;color:#c9d1d9;white-space:nowrap;font-variant-numeric:tabular-nums}
+  tr.today th,tr.today td{background:#0f141c}
+  .mini{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 5px;border-radius:4px;margin:1px 1px}
+  .mini.long{background:#0f2a19;color:#3fb950}.mini.short{background:#2b1416;color:#f85149}.mini.depends{background:#2a2411;color:#d29922}
+  td.muted .b,td.none .b{color:#6e7681}
+  .feed{background:#0f141c;border:1px solid #21262d;border-radius:10px;padding:6px 4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
+  .ev{padding:3px 10px;border-left:3px solid transparent;white-space:pre-wrap;word-break:break-word}
+  .ev .t{color:#6e7681}
+  .ev.ok{border-left-color:#3fb950}.ev.error{border-left-color:#f85149;background:#1a0f11}.ev.run{border-left-color:#58a6ff}.ev.skip{color:#6e7681}
+  .ev.error .b{color:#f85149}
+  .legend{font-size:11.5px;color:#6e7681;margin-top:8px}
+  footer{margin-top:30px;color:#4d5560;font-size:11px;text-align:center}
+</style></head><body><div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1>Intraday-Bias Dashboard</h1>
+      <div class="dim">US30USD + NAS100USD · scheduled to Discord · checks every 15 min</div>
+    </div>
+    <div class="meta">
+      <div class="clock">${esc(now.pretty)} · ${esc(now.hm)} ET</div>
+      <div class="dim">${ldHtml}</div>
+      <div class="dim">next run: ${esc(nextRunText(now))} · last check ${esc(lastCheck)} · next ≈ ${esc(nextCheck)}</div>
+    </div>
+  </header>
+
+  <h2>Today — ${esc(now.dateISO)}${now.isWeekend ? ' (weekend — no runs)' : ''}</h2>
+  <div class="grid">${todayCards}</div>
+
+  <h2>Recent activity <span class="dim" style="text-transform:none;letter-spacing:0;font-weight:400">— runs, posts &amp; errors (routine 15-min checks hidden)</span></h2>
+  <div class="feed">${feed}</div>
+
+  <h2>History</h2>
+  <table>
+    <thead><tr><th>Date</th><th>08:30 · BASELINE</th><th>10:00 · UPDATE</th></tr></thead>
+    <tbody>${hist}</tbody>
+  </table>
+  <div class="legend">✅ posted&nbsp; 🔄 running&nbsp; ⏳ scheduled/due&nbsp; ⚠️ failed·retrying&nbsp; ❌ failed&nbsp; · no run &nbsp;|&nbsp; hover a chip for the full call</div>
+
+  <footer>generated ${esc(now.hm)} ET · auto-refreshes every ${REFRESH_SEC}s · regenerated on each scheduler fire</footer>
+</div></body></html>`;
+}
+
+try {
+  writeFileSync(OUT, render());
+  console.log(`dashboard -> ${OUT}`);
+} catch (e) {
+  const msg = esc(e && e.stack ? e.stack : String(e));
+  try { writeFileSync(OUT, `<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=30><body style="background:#0b0e14;color:#f85149;font-family:monospace;padding:20px"><h2>dashboard generation error</h2><pre>${msg}</pre></body>`); } catch {}
+  console.error('dashboard error:', e);
+  process.exit(1);
+}

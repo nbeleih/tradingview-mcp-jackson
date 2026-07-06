@@ -29,6 +29,11 @@ CLAUDE_BIN="$(command -v claude || true)"
 NODE_BIN="$(command -v node || true)"
 TIMEOUT_BIN="$(command -v gtimeout || command -v timeout || true)"
 
+# Refresh the status dashboard (bias-reports/dashboard.html) on every fire — SKIP or
+# RUN — via an EXIT trap, so it reflects the settled state after each 15-min check.
+gen_dashboard(){ [ -n "$NODE_BIN" ] && "$NODE_BIN" "$SCRIPT_DIR/bias-dashboard.mjs" >/dev/null 2>>"$LOG" || true; }
+trap gen_dashboard EXIT
+
 GUARD_OUT="$("$SCRIPT_DIR/bias-guard.sh" 2>>"$LOG")"
 DIRECTIVE="$(printf '%s\n' "$GUARD_OUT" | tail -1)"
 SLOT="$(printf '%s\n' "$GUARD_OUT" | sed -n 's/^SLOT=//p')"
