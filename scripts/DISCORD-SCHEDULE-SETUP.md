@@ -1,70 +1,81 @@
 # Intraday Bias → Discord (scheduled)
 
-A scheduled Cowork task runs the **intraday-bias** skill every US market weekday
-pre-market, scans the live TradingView charts via the `tradingview` MCP, and posts
-the full report to a Discord channel through a webhook.
+Runs the **intraday-bias** skill on `OANDA:US30USD` + `OANDA:NAS100USD` twice each
+weekday morning, scanning the live TradingView charts, and posts the full report to a
+Discord channel.
+
+## Why this runs in Claude Code, not Cowork
+
+The TradingView MCP is a **local** stdio server (`node src/server.js` → TradingView on
+`localhost:9222`). Per Anthropic's docs, *local MCP servers aren't available in Cowork*
+— only remote (public-internet) connectors are. So a Cowork scheduled task literally
+cannot drive TradingView. Instead, a **macOS launchd** job calls **Claude Code**
+(`claude -p`) on the host, where the local `tradingview` MCP works and there's direct
+network to Discord.
 
 ## Pieces
 
 | Piece | Location | Purpose |
 |---|---|---|
-| Skill | `skills/intraday-bias/SKILL.md` | The analysis (US30USD + NAS100USD, Daily→1H, SMT, bias). |
-| Delivery script | `scripts/discord-post.mjs` | Splits a report into ≤2000-char messages and POSTs to the webhook (via curl/proxy). |
-| Run guard | `scripts/bias-guard.sh` | Per-day lock + marker + ET time-window → prints RUN / REPOST / SKIP. |
-| Run finisher | `scripts/bias-finish.sh` | `success` marks the day done; `abort` frees the lock so the next cycle retries. |
+| Skill | `skills/intraday-bias/SKILL.md` | The analysis. Self-detects BASELINE vs UPDATE from its daily log. |
+| Skill log | `intraday-bias-logs/<date>.md` (git-ignored) | Continuity log the skill reads (Phase 0) and appends (Phase 6). |
+| Runner | `scripts/run-intraday-bias.sh` | Guard → `claude -p` (runs the skill, writes report) → post to Discord → finish. |
+| Run guard | `scripts/bias-guard.sh` | Weekday + ET-window + per-slot state → prints RUN / REPOST / SKIP. |
+| Run finisher | `scripts/bias-finish.sh` | `success` marks the slot done; `abort` sets it idle so the next cycle retries. |
+| Delivery | `scripts/discord-post.mjs` | Splits the report into ≤2000-char messages and POSTs to the webhook (via curl). |
 | Webhook secret | `.discord-webhook` (repo root, git-ignored) | One line: your Discord webhook URL. |
-| Saved reports | `bias-reports/intraday-bias-YYYY-MM-DD.md` (git-ignored) | Durable copy of each run. |
-| Scheduled task | `~/Claude/Scheduled/intraday-bias-discord/SKILL.md` | The recurring job (created via Cowork). |
+| Saved reports | `bias-reports/intraday-bias-<date>-<slot>.md` (git-ignored) | Durable copy of each run + `scheduler.log`. |
+| launchd job | `scripts/com.nourbeleih.intraday-bias.plist` | Fires the runner every 15 min. |
 
 ## One-time setup
 
-1. **Create a Discord webhook**: in your server → *Server Settings → Integrations →
-   Webhooks → New Webhook*, choose the target channel, **Copy Webhook URL**.
-2. **Store it** in the repo root as `.discord-webhook` (a single line, the URL only).
-   It is git-ignored so it will not be committed.
-3. **Allow Discord network access**: Cowork's sandbox blocks outbound traffic to
-   everything except package registries by default. Add `discord.com` to the allowed
-   domains in **Claude → Settings → Capabilities** (network access), or the POST will
-   fail. Each run still saves the report to `bias-reports/` even if posting fails.
+1. **Claude Code has the tradingview MCP.** Confirm with `claude mcp list` (it should
+   list `tradingview`). It's also defined in the repo's `.mcp.json`, so a `claude` run
+   started inside this repo picks it up.
+2. **Webhook** is stored in `.discord-webhook` at the repo root (already set). No Cowork
+   network allowlist is needed anymore — posting happens from the host via curl.
+3. **Install the launchd job:**
+   ```bash
+   cp scripts/com.nourbeleih.intraday-bias.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.nourbeleih.intraday-bias.plist
+   ```
 
-## Test the delivery script
+## Test it once (real run + real Discord post)
 
+Force a run regardless of the clock (this actually scans and posts):
 ```bash
-# balance/split check only, no network:
-node scripts/discord-post.mjs bias-reports/some-report.md --dry-run
-
-# real send (needs .discord-webhook + discord.com allowed):
-node scripts/discord-post.mjs bias-reports/some-report.md --title "**Test**"
+BIAS_R2_START=0000 BIAS_R2_END=2359 bash scripts/run-intraday-bias.sh
+tail -n 40 bias-reports/scheduler.log
 ```
+TradingView Desktop should be open (the runner will `tv_launch` it otherwise).
 
 ## Schedule & retry
 
-Task id `intraday-bias-discord`, cron `*/15 8-11 * * 1-5` (weekdays, every 15 min
-from 08:00, America/New_York; the scheduler adds a small fixed dispatch delay).
+launchd fires the runner every 15 min; `bias-guard.sh` decides what happens:
 
-The task fires every 15 minutes, but `bias-guard.sh` decides what actually happens:
+| Slot | ET window | Typical mode |
+|---|---|---|
+| 0830 | 08:30–09:59 | BASELINE (first read) |
+| 1000 | 10:00–11:30 | UPDATE (~90 min later; reconciles the 8:30 call) |
 
-- Only runs the analysis inside the **08:30–11:30 ET** window (so the pre-08:30
-  fires are skipped and it never posts a stale midday bias). Change the window with
-  `BIAS_START_HHMM` / `BIAS_END_HHMM` env vars in the guard call.
-- Runs the full analysis **at most once per day** (a `.posted-<date>` marker).
-- Uses an atomic per-day **lock** so overlapping fires never double-run or
-  double-post; a crashed run's lock is auto-reclaimed after 25 min.
-- If the machine was **asleep / app closed at 8:30**, the next fire after it wakes
-  (within the window) runs the analysis — that's the retry behavior. If only the
-  Discord post failed, later cycles **re-post** the already-saved report without
-  re-analyzing.
+- **Weekdays only**, and only inside the two windows (which are back-to-back, no overlap).
+- Each slot runs the full analysis **at most once per day** (per-slot state files
+  `.state-0830-<date>` / `.state-1000-<date>`), so the 10:00 run isn't blocked by 8:30.
+- State files hold `running|posted|idle:<epoch>` and are only **overwritten, never
+  deleted**. A `running` state older than 25 min is treated as a crashed run and reclaimed.
+- **Retry if asleep:** launchd runs a missed interval once on wake, so if the machine was
+  asleep at 8:37, the next fire after it wakes (still inside the window) runs it.
+- If the analysis fails or Discord is unreachable, the report is still saved and the slot
+  is set `idle` so the next 15-min cycle retries (or `REPOST`s the saved report).
 
-Effective result: first real run ~08:37 ET; if missed, retried every ~15 min until
-~11:30 ET, exactly once. TradingView Desktop must be running with CDP on port 9222
-(the task will `tv_launch` it if needed), and the Claude desktop app must be open at
-run time (scheduled tasks run while the app is open; a missed run also fires on next
-launch).
+## Requirements at run time
+- The Mac is awake (or wakes) during the window; TradingView Desktop installed/running
+  (port 9222); `claude` logged in with the tradingview MCP.
 
-## Notes
-
-- The delivery script POSTs via `curl`, which honors the sandbox's mandatory HTTP
-  proxy (`HTTPS_PROXY`). Node's built-in `fetch` does **not** use the proxy and fails
-  with `EAI_AGAIN`, so `curl` is used deliberately.
-- Every run saves the full report to `bias-reports/` first, so even if the Discord
-  post fails the analysis is never lost.
+## Uninstall
+```bash
+launchctl unload ~/Library/LaunchAgents/com.nourbeleih.intraday-bias.plist
+rm ~/Library/LaunchAgents/com.nourbeleih.intraday-bias.plist
+```
+The old Cowork scheduled task `intraday-bias-discord` is paused/disabled and can be
+removed from the Cowork **Scheduled** sidebar.

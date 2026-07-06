@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for the intraday-bias report.
+
+  Install:
+    cp scripts/com.nourbeleih.intraday-bias.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.nourbeleih.intraday-bias.plist
+
+  It fires every 15 minutes; scripts/bias-guard.sh enforces the ET windows
+  (08:30-09:59 and 10:00-11:30), weekdays only, and once-per-slot. launchd runs a
+  missed interval once on wake, giving the retry-if-asleep behavior.
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.nourbeleih.intraday-bias.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nourbeleih.intraday-bias</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/nourmendoza/Repos/DT/tradingview-mcp-jackson/scripts/run-intraday-bias.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/nourmendoza/.claude/local:/Users/nourmendoza/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/nourmendoza/Repos/DT/tradingview-mcp-jackson/bias-reports/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/nourmendoza/Repos/DT/tradingview-mcp-jackson/bias-reports/launchd.err.log</string>
+</dict>
+</plist>

@@ -1,30 +1,27 @@
 #!/usr/bin/env bash
 #
-# bias-finish.sh success|abort — close out a scheduled intraday-bias run.
+# bias-finish.sh <success|abort> <0830|1000> — close out a scheduled intraday-bias run.
 #
-#   success : mark today as posted (so later 15-min fires skip) and release the lock
-#   abort   : release the lock WITHOUT marking, so the next 15-min fire retries
+#   success : mark this slot done today (later fires in the slot skip)
+#   abort   : set the slot back to idle so the NEXT 15-min fire retries immediately
 #
+# Writes the per-slot state file only (no deletes — deletions are gated inside
+# scheduled Cowork sandboxes).
 set -u
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DIR="$REPO/bias-reports"
 DATE="$(TZ=America/New_York date +%F)"
-POSTED="$DIR/.posted-$DATE"
-LOCK="$DIR/.run-$DATE.lock"
+NOW=$(date +%s)
 
-case "${1:-}" in
-  success)
-    date -u +%FT%TZ > "$POSTED"
-    rm -rf "$LOCK"
-    echo "finish: marked posted ($POSTED), lock released"
-    ;;
-  abort)
-    rm -rf "$LOCK"
-    echo "finish: lock released without marker — will retry next 15-min cycle"
-    ;;
-  *)
-    echo "usage: bias-finish.sh success|abort" >&2
-    exit 2
-    ;;
+ACTION="${1:-}"
+SLOT="${2:-}"
+case "$SLOT" in 0830|1000) ;; *) echo "usage: bias-finish.sh <success|abort> <0830|1000>" >&2; exit 2;; esac
+
+STATE="$DIR/.state-$SLOT-$DATE"
+
+case "$ACTION" in
+  success) printf 'posted:%s\n' "$NOW" > "$STATE"; echo "finish: $SLOT marked posted" ;;
+  abort)   printf 'idle:%s\n'   "$NOW" > "$STATE"; echo "finish: $SLOT set idle — next 15-min cycle retries" ;;
+  *)       echo "usage: bias-finish.sh <success|abort> <0830|1000>" >&2; exit 2 ;;
 esac

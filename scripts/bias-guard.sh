@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 #
-# bias-guard.sh — decide whether the scheduled intraday-bias run should proceed.
+# bias-guard.sh — decide whether a scheduled intraday-bias run should proceed.
 #
-# The scheduled task fires every 15 min across a morning window so a run that was
-# missed (e.g. computer asleep at 8:30) is retried once the machine is awake.
-# This guard makes that safe and idempotent:
-#   - only runs inside the ET time window (default 08:30–11:30),
-#   - runs the analysis at most ONCE per day (marker file),
-#   - uses an atomic per-day lock so overlapping fires don't double-run/double-post,
-#   - recovers a stale lock left by a crashed run.
+# The task runs TWICE each weekday morning, each with its own retry window:
+#   slot 0830  08:30–09:59 ET  -> the day's first run (BASELINE, pre-market)
+#   slot 1000  10:00–11:30 ET  -> the second run (UPDATE, ~90 min later)
+# (BASELINE vs UPDATE is decided by the skill itself from its daily log; this
+#  guard only handles WHICH run / WHEN and prevents duplicate/again-today runs.
+#  The two windows are back-to-back and never overlap.)
 #
-# Prints diagnostics to stderr and exactly one directive as the LAST stdout line:
-#   RUN            -> do the full analysis, then call: bias-finish.sh success|abort
-#   REPOST         -> analysis already saved but Discord post failed earlier;
-#                     re-post $DIR/intraday-bias-<DATE>.md, then finish success|abort
-#   SKIP:<reason>  -> do nothing this cycle
+# State is tracked in ONE per-slot file, `.state-<slot>-<date>`, whose contents are
+# "<status>:<epoch>" with status in {running, posted, idle}. We use a plain file
+# that we OVERWRITE (never delete): deletions are permission-gated inside scheduled
+# Cowork sandboxes, so any lock/marker scheme based on rm/rmdir gets stuck. Writing
+# (truncate-in-place) is always allowed.
 #
-# Window can be overridden with env: BIAS_START_HHMM / BIAS_END_HHMM (e.g. 0830 1130)
+# Fires 15 min apart with a fixed dispatch delay, so runs don't truly overlap; the
+# state file mainly stops a new fire from starting while a prior run is still going
+# and records "posted" so the slot runs once/day.
+#
+# stdout (parse these): `SLOT=0830|1000`, `REPORT=<path>`, and the directive LAST:
+#   RUN | REPOST | SKIP:<reason>
+# Diagnostics -> stderr. Windows overridable via env (HHMM):
+#   BIAS_R1_START/BIAS_R1_END/BIAS_R2_START/BIAS_R2_END.
 set -u
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,47 +31,53 @@ mkdir -p "$DIR"
 
 DATE="$(TZ=America/New_York date +%F)"
 NOWMIN=$((10#$(TZ=America/New_York date +%H%M)))
-START=$((10#${BIAS_START_HHMM:-0830}))
-END=$((10#${BIAS_END_HHMM:-1130}))
+NOW=$(date +%s)
+R1_START=$((10#${BIAS_R1_START:-0830})); R1_END=$((10#${BIAS_R1_END:-0959}))
+R2_START=$((10#${BIAS_R2_START:-1000})); R2_END=$((10#${BIAS_R2_END:-1130}))
 STALE_SEC=$(( 25 * 60 ))
 
-POSTED="$DIR/.posted-$DATE"
-REPORT="$DIR/intraday-bias-$DATE.md"
-LOCK="$DIR/.run-$DATE.lock"
-
-# acquire lock atomically (mkdir), stamp it with an epoch we control (NOT file
-# mtime — the mounted FS mtime does not track the sandbox clock reliably).
-acquire() {
-  if mkdir "$LOCK" 2>/dev/null; then
-    date +%s > "$LOCK/ts"
-    [ -f "$REPORT" ] && echo "REPOST" || echo "RUN"
-    return 0
-  fi
-  return 1
-}
-
-echo "guard: date=$DATE now=$NOWMIN window=$START-$END posted=$([ -f "$POSTED" ] && echo y || echo n) report=$([ -f "$REPORT" ] && echo y || echo n) lock=$([ -d "$LOCK" ] && echo y || echo n)" >&2
-
-# 1) already fully done today
-if [ -f "$POSTED" ]; then echo "SKIP:already posted today"; exit 0; fi
-
-# 2) outside the allowed ET window (covers jittered-early fires and late/stale wakes)
-if [ "$NOWMIN" -lt "$START" ] || [ "$NOWMIN" -gt "$END" ]; then
-  echo "SKIP:outside ${START}-${END} ET window (now $NOWMIN)"; exit 0
+# weekdays only (launchd fires by interval, so enforce the day here). 1=Mon..7=Sun
+DOW=$(TZ=America/New_York date +%u)
+if [ "$DOW" -gt 5 ]; then
+  echo "guard: weekend (dow=$DOW)" >&2
+  echo "SKIP:weekend (ET day $DOW)"
+  exit 0
 fi
 
-# 3) acquire the per-day lock
-if acquire; then exit 0; fi
-
-# 4) lock is held — decide in-progress vs. stale (crashed run) via the stamped epoch
-NOW=$(date +%s)
-THEN=$(cat "$LOCK/ts" 2>/dev/null || echo 0)
-AGE=$(( NOW - THEN ))
-if [ "$THEN" -gt 0 ] && [ "$AGE" -gt "$STALE_SEC" ]; then
-  echo "guard: stale lock (age ${AGE}s > ${STALE_SEC}s), reclaiming" >&2
-  rm -rf "$LOCK"
-  if acquire; then exit 0; fi
+# choose the slot from the current ET time
+if   [ "$NOWMIN" -ge "$R1_START" ] && [ "$NOWMIN" -le "$R1_END" ]; then SLOT=0830
+elif [ "$NOWMIN" -ge "$R2_START" ] && [ "$NOWMIN" -le "$R2_END" ]; then SLOT=1000
+else
+  echo "guard: now=$NOWMIN outside run1($R1_START-$R1_END) / run2($R2_START-$R2_END)" >&2
+  echo "SKIP:outside the 08:30 / 10:00 ET windows (now $NOWMIN ET)"
+  exit 0
 fi
 
-echo "SKIP:another run in progress"
+STATE="$DIR/.state-$SLOT-$DATE"
+REPORT="$DIR/intraday-bias-$DATE-$SLOT.md"
+
+echo "SLOT=$SLOT"
+echo "REPORT=$REPORT"
+
+# read current state ("status:epoch")
+ST=""; TS=0
+if [ -f "$STATE" ]; then
+  IFS=: read -r ST TS < "$STATE" 2>/dev/null || true
+  case "${TS:-}" in ''|*[!0-9]*) TS=0 ;; esac
+fi
+AGE=$(( NOW - TS ))
+echo "guard: date=$DATE now=$NOWMIN slot=$SLOT state=${ST:-none} age=${AGE}s report=$([ -f "$REPORT" ] && echo y || echo n)" >&2
+
+# 1) this slot already completed today
+if [ "$ST" = "posted" ]; then echo "SKIP:already posted the $SLOT run today"; exit 0; fi
+
+# 2) a fresh run is in progress
+if [ "$ST" = "running" ] && [ "$TS" -gt 0 ] && [ "$AGE" -lt "$STALE_SEC" ]; then
+  echo "SKIP:another $SLOT run in progress (${AGE}s)"; exit 0
+fi
+
+# 3) claim by overwriting the state file (no delete needed); RUN, or REPOST if a
+#    report was already produced this slot but the Discord post had failed.
+printf 'running:%s\n' "$NOW" > "$STATE"
+[ -f "$REPORT" ] && echo "REPOST" || echo "RUN"
 exit 0
