@@ -27,9 +27,10 @@ const LOGS = join(REPO, 'intraday-bias-logs');
 const OUT = join(REPORTS, 'dashboard.html');
 
 const SLOTS = [
-  { id: '0830', label: 'BASELINE', window: '08:30–09:59 ET', startMin: 8 * 60 + 30, endMin: 9 * 60 + 59 },
-  { id: '1000', label: 'UPDATE',   window: '10:00–11:30 ET', startMin: 10 * 60,      endMin: 11 * 60 + 30 },
+  { id: '0945', label: 'DAILY', window: '09:45–10:35 ET', startMin: 9 * 60 + 45, endMin: 10 * 60 + 35 },
 ];
+// labels for slot ids seen in history (older schedules) so past runs still render
+const SLOT_LABELS = { '0830': 'BASELINE', '1000': 'UPDATE', '0945': 'DAILY' };
 const REFRESH_SEC = 60;
 
 // ---------- small helpers ----------
@@ -182,12 +183,12 @@ function slotStatus(date, slot, ctx) {
 }
 
 function nextRunText(now) {
-  if (now.isWeekend) return 'Mon 08:30 ET';
-  if (now.minutes < SLOTS[0].startMin) return 'today 08:30 ET';
-  if (now.minutes <= SLOTS[0].endMin) return 'in the 08:30 window now';
-  if (now.minutes < SLOTS[1].startMin) return 'today 10:00 ET';
-  if (now.minutes <= SLOTS[1].endMin) return 'in the 10:00 window now';
-  return 'tomorrow 08:30 ET';
+  const s = SLOTS[0];
+  const start = s.window.split('–')[0];
+  if (now.isWeekend) return `Mon ${start}`;
+  if (now.minutes < s.startMin) return `today ${start}`;
+  if (now.minutes <= s.endMin) return 'in the run window now';
+  return `tomorrow ${start}`;
 }
 
 function discoverDates(stateMap) {
@@ -226,20 +227,36 @@ function slotCard(date, slot, ctx) {
   </section>`;
 }
 
+// Which slots actually have data on a given date (handles schedule changes over time).
+function slotsForDate(date) {
+  const ids = new Set();
+  for (const f of listSafe(REPORTS)) {
+    let m = f.match(/^intraday-bias-(\d{4}-\d{2}-\d{2})-(\d{4})\.md$/);
+    if (m && m[1] === date) ids.add(m[2]);
+    m = f.match(/^\.state-(\d{4})-(\d{4}-\d{2}-\d{2})$/);
+    if (m && m[2] === date) ids.add(m[1]);
+  }
+  return [...ids].sort();
+}
+
 function historyRows(dates, ctx) {
   return dates.map((date) => {
-    const cells = SLOTS.map((slot) => {
+    const ids = slotsForDate(date);
+    const runs = ids.length ? ids.map((id) => {
+      const slot = SLOTS.find((x) => x.id === id) || { id };
       const s = slotStatus(date, slot, ctx);
-      const rep = s.key === 'posted' ? parseReport(date, slot.id) : null;
+      const rep = s.key === 'posted' ? parseReport(date, id) : null;
       const calls = rep?.symbols?.map((x) => {
         const cls = x.call === 'LONG' ? 'long' : x.call === 'SHORT' ? 'short' : 'depends';
         return `<span class="mini ${cls}" title="${esc(x.sym)}: ${esc(x.callFull)}">${esc(x.sym.replace('USD', ''))} ${esc(x.call)}</span>`;
       }).join(' ') || '';
       const link = rep ? ` <a href="${esc(rep.path)}">md</a>` : '';
-      return `<td class="${s.cls}"><span class="b">${s.badge}</span> ${calls}${link}</td>`;
-    }).join('');
+      const t = id.replace(/(\d\d)(\d\d)/, '$1:$2');
+      const lbl = SLOT_LABELS[id] ? ` <span class="tag">${esc(SLOT_LABELS[id])}</span>` : '';
+      return `<span class="hrun ${s.cls}"><span class="b">${s.badge}</span> <b>${esc(t)}</b>${lbl} ${calls}${link}</span>`;
+    }).join('') : '<span class="dim">—</span>';
     const isToday = date === ctx.now.dateISO;
-    return `<tr${isToday ? ' class="today"' : ''}><th>${esc(date)}${isToday ? ' <span class="tag">today</span>' : ''}</th>${cells}</tr>`;
+    return `<tr${isToday ? ' class="today"' : ''}><th>${esc(date)}${isToday ? ' <span class="tag">today</span>' : ''}</th><td>${runs}</td></tr>`;
   }).join('');
 }
 
@@ -292,7 +309,7 @@ export function render({ live = false, serverStart = null } = {}) {
   .pill.ok{background:#12261a;color:#3fb950;border:1px solid #1f6f34}
   .pill.bad{background:#2b1416;color:#f85149;border:1px solid #7d2a2a}
   .meta{margin-left:auto;text-align:right}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
   @media(max-width:680px){.grid{grid-template-columns:1fr}}
   .card{background:#0f141c;border:1px solid #21262d;border-radius:12px;padding:14px 15px;border-left:4px solid #30363d}
   .card.ok{border-left-color:#3fb950}.card.pending{border-left-color:#58a6ff}.card.run{border-left-color:#d29922}
@@ -322,6 +339,7 @@ export function render({ live = false, serverStart = null } = {}) {
   tr.today th,tr.today td{background:#0f141c}
   .mini{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 5px;border-radius:4px;margin:1px 1px}
   .mini.long{background:#0f2a19;color:#3fb950}.mini.short{background:#2b1416;color:#f85149}.mini.depends{background:#2a2411;color:#d29922}
+  .hrun{display:block;padding:2px 0}.hrun .b{margin-right:2px}
   td.muted .b,td.none .b{color:#6e7681}
   .feed{background:#0f141c;border:1px solid #21262d;border-radius:10px;padding:6px 4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
   .ev{padding:3px 10px;border-left:3px solid transparent;white-space:pre-wrap;word-break:break-word}
@@ -360,7 +378,7 @@ export function render({ live = false, serverStart = null } = {}) {
 
   <h2>History</h2>
   <table>
-    <thead><tr><th>Date</th><th>08:30 · BASELINE</th><th>10:00 · UPDATE</th></tr></thead>
+    <thead><tr><th>Date</th><th>Runs</th></tr></thead>
     <tbody>${hist}</tbody>
   </table>
   <div class="legend">✅ posted&nbsp; 🔄 running&nbsp; ⏳ scheduled/due&nbsp; ⚠️ failed·retrying&nbsp; ❌ failed&nbsp; · no run &nbsp;|&nbsp; hover a chip for the full call</div>

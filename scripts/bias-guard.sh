@@ -2,12 +2,11 @@
 #
 # bias-guard.sh — decide whether a scheduled intraday-bias run should proceed.
 #
-# The task runs TWICE each weekday morning, each with its own retry window:
-#   slot 0830  08:30–09:59 ET  -> the day's first run (BASELINE, pre-market)
-#   slot 1000  10:00–11:30 ET  -> the second run (UPDATE, ~90 min later)
-# (BASELINE vs UPDATE is decided by the skill itself from its daily log; this
-#  guard only handles WHICH run / WHEN and prevents duplicate/again-today runs.
-#  The two windows are back-to-back and never overlap.)
+# The task runs ONCE each weekday, in a single retry window:
+#   slot 0945  09:45–10:35 ET  -> the day's run (BASELINE; 15 min after the 9:30 open)
+# (BASELINE vs UPDATE is decided by the skill itself from its daily log; a lone daily
+#  run is always BASELINE. This guard only handles WHEN and prevents duplicate/
+#  again-today runs; the launchd plist fires at 09:45 and retries 10:00/10:15/10:30.)
 #
 # State is tracked in ONE per-slot file, `.state-<slot>-<date>`, whose contents are
 # "<status>:<epoch>" with status in {running, posted, idle}. We use a plain file
@@ -19,10 +18,9 @@
 # state file mainly stops a new fire from starting while a prior run is still going
 # and records "posted" so the slot runs once/day.
 #
-# stdout (parse these): `SLOT=0830|1000`, `REPORT=<path>`, and the directive LAST:
+# stdout (parse these): `SLOT=0945`, `REPORT=<path>`, and the directive LAST:
 #   RUN | REPOST | SKIP:<reason>
-# Diagnostics -> stderr. Windows overridable via env (HHMM):
-#   BIAS_R1_START/BIAS_R1_END/BIAS_R2_START/BIAS_R2_END.
+# Diagnostics -> stderr. Window overridable via env (HHMM): BIAS_START/BIAS_END.
 set -u
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,8 +30,7 @@ mkdir -p "$DIR"
 DATE="$(TZ=America/New_York date +%F)"
 NOWMIN=$((10#$(TZ=America/New_York date +%H%M)))
 NOW=$(date +%s)
-R1_START=$((10#${BIAS_R1_START:-0830})); R1_END=$((10#${BIAS_R1_END:-0959}))
-R2_START=$((10#${BIAS_R2_START:-1000})); R2_END=$((10#${BIAS_R2_END:-1130}))
+WIN_START=$((10#${BIAS_START:-0945})); WIN_END=$((10#${BIAS_END:-1035}))
 STALE_SEC=$(( 25 * 60 ))
 
 # weekdays only (launchd fires by interval, so enforce the day here). 1=Mon..7=Sun
@@ -44,12 +41,12 @@ if [ "$DOW" -gt 5 ]; then
   exit 0
 fi
 
-# choose the slot from the current ET time
-if   [ "$NOWMIN" -ge "$R1_START" ] && [ "$NOWMIN" -le "$R1_END" ]; then SLOT=0830
-elif [ "$NOWMIN" -ge "$R2_START" ] && [ "$NOWMIN" -le "$R2_END" ]; then SLOT=1000
+# single daily window (launchd fires 09:45/10:00/10:15/10:30; guard runs it once)
+if [ "$NOWMIN" -ge "$WIN_START" ] && [ "$NOWMIN" -le "$WIN_END" ]; then
+  SLOT=0945
 else
-  echo "guard: now=$NOWMIN outside run1($R1_START-$R1_END) / run2($R2_START-$R2_END)" >&2
-  echo "SKIP:outside the 08:30 / 10:00 ET windows (now $NOWMIN ET)"
+  echo "guard: now=$NOWMIN outside window($WIN_START-$WIN_END)" >&2
+  echo "SKIP:outside the 09:45 ET window (now $NOWMIN ET)"
   exit 0
 fi
 
