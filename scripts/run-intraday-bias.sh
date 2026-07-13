@@ -76,6 +76,21 @@ if [ -z "$CLAUDE_BIN" ]; then
   exit 1
 fi
 
+# Durable unattended auth: the interactive `claude` login expires (notably across
+# reboots), which fails headless runs with "Not logged in". Prefer a long-lived
+# subscription token (`claude setup-token` -> ~1yr), else an API key. Both live in
+# gitignored files at the repo root; whichever exists is used (OAuth token preferred,
+# since ANTHROPIC_API_KEY would otherwise take precedence). See DISCORD-SCHEDULE-SETUP.md.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  if [ -f "$REPO/.claude-oauth-token" ]; then
+    CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$REPO/.claude-oauth-token")"; export CLAUDE_CODE_OAUTH_TOKEN
+    log "auth: using CLAUDE_CODE_OAUTH_TOKEN (.claude-oauth-token)"
+  elif [ -f "$REPO/.anthropic-api-key" ]; then
+    ANTHROPIC_API_KEY="$(tr -d '[:space:]' < "$REPO/.anthropic-api-key")"; export ANTHROPIC_API_KEY
+    log "auth: using ANTHROPIC_API_KEY (.anthropic-api-key)"
+  fi
+fi
+
 PROMPT="You are the scheduled intraday-bias job (slot ${SLOT} ET, ${DATE}). Work autonomously; never ask questions.
 1) Ensure TradingView Desktop is connected: call mcp__tradingview__tv_health_check; if not connected, call mcp__tradingview__tv_launch, wait ~20s, then re-check. If it STILL cannot connect, do NOT write any report file — reply exactly TV_UNREACHABLE and stop.
 2) Read ${REPO}/skills/intraday-bias/SKILL.md and follow it EXACTLY, start to finish, for BOTH instruments in order: OANDA:US30USD then OANDA:NAS100USD. Do every phase, including Phase 0 (read intraday-bias-logs/${DATE}.md to decide BASELINE vs UPDATE and load prior calls) and Phase 6 (append this run to intraday-bias-logs/${DATE}.md; never overwrite). On an UPDATE, reconcile the earlier call per Phase 4. Refresh PDH/PDL/PDC, draw S/R (orange=resistance, blue=support, purple=previous-day; keep them on the chart), run the NAS100USD<->SPX500USD SMT check, size everything in ATR per instrument, and end with a firm LONG/SHORT/DEPENDS for each.
@@ -83,12 +98,27 @@ PROMPT="You are the scheduled intraday-bias job (slot ${SLOT} ET, ${DATE}). Work
 4) Then reply with just: DONE"
 
 log "RUN: invoking claude ($SLOT)"
+CLAUDE_OUT="$(mktemp -t bias-claude.XXXXXX)"
 if [ -n "$TIMEOUT_BIN" ]; then
-  "$TIMEOUT_BIN" 1200 "$CLAUDE_BIN" -p "$PROMPT" --dangerously-skip-permissions >>"$LOG" 2>&1 </dev/null
+  "$TIMEOUT_BIN" 1200 "$CLAUDE_BIN" -p "$PROMPT" --dangerously-skip-permissions >"$CLAUDE_OUT" 2>&1 </dev/null
 else
-  "$CLAUDE_BIN" -p "$PROMPT" --dangerously-skip-permissions >>"$LOG" 2>&1 </dev/null
+  "$CLAUDE_BIN" -p "$PROMPT" --dangerously-skip-permissions >"$CLAUDE_OUT" 2>&1 </dev/null
 fi
-log "claude exited rc=$?"
+CLAUDE_RC=$?
+cat "$CLAUDE_OUT" >>"$LOG"
+log "claude exited rc=$CLAUDE_RC"
+
+# An auth failure (logged-out CLI / expired-or-bad token) looks nothing like a TV or
+# analysis failure — detect it and say so plainly, so the dashboard tells you to
+# re-login instead of blaming TradingView. Still abort->idle so a mid-window /login
+# is picked up by the next retry (an auth failure costs no tokens).
+if grep -qiE 'not logged in|please run /login|invalid api key|authentication_error|oauth token( has)? expired|401 unauthorized' "$CLAUDE_OUT"; then
+  rm -f "$CLAUDE_OUT"
+  finish abort
+  log "AUTH FAILURE: claude not logged in — run 'claude /login' (or set a durable token: CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY). Will retry this slot. ($SLOT)"
+  exit 0
+fi
+rm -f "$CLAUDE_OUT"
 
 if [ -f "$REPORT" ] && [ -s "$REPORT" ]; then
   if post_report >>"$LOG" 2>&1; then

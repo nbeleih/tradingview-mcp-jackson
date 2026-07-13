@@ -6,5 +6,7 @@ temp_*
 discovery-log.json
 .DS_Store
 .discord-webhook
+.claude-oauth-token
+.anthropic-api-key
 bias-reports/
 intraday-bias-logs/

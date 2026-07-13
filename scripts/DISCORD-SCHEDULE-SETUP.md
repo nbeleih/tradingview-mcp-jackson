@@ -71,7 +71,29 @@ launchd fires the runner at **09:45 ET** (and retries **10:00 / 10:15 / 10:30**)
 
 ## Requirements at run time
 - The Mac is awake (or wakes) during the window; TradingView Desktop installed/running
-  (port 9222); `claude` logged in with the tradingview MCP.
+  (port 9222); `claude` authenticated (see **Durable auth** below) with the tradingview MCP.
+
+## Durable auth (avoid the `/login` expiry)
+
+The runner calls `claude -p` **headless**. The interactive `claude` login session
+expires (notably across reboots) — when it does, every run fails fast with `Not logged
+in`, the runner logs `AUTH FAILURE`, and the dashboard shows a "claude is logged out —
+run /login" banner. Two durable fixes (the runner auto-loads whichever gitignored file
+is present; the OAuth token is preferred):
+
+- **Recommended — long-lived subscription token (billing stays on your plan):**
+  ```bash
+  claude setup-token                              # one-time; OAuth flow, prints a ~1-year token
+  printf '%s\n' 'PASTE_TOKEN_HERE' > .claude-oauth-token   # repo root; gitignored
+  ```
+  The runner exports it as `CLAUDE_CODE_OAUTH_TOKEN`. Renew (`setup-token` again) before it expires (~1 yr).
+- **Fallback — API key (pay-per-use, separate from your subscription):**
+  ```bash
+  printf '%s\n' 'sk-ant-...' > .anthropic-api-key          # repo root; gitignored
+  ```
+  Exported as `ANTHROPIC_API_KEY`.
+
+With one of these in place, a reboot no longer breaks the scheduled run.
 
 ## Uninstall
 ```bash

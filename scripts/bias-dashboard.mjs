@@ -115,7 +115,7 @@ function parseSchedulerEvents(limit) {
     if (ts == null) continue; // skip the non-timestamped "guard: ..." diagnostics
     const body = line.replace(/^\[[^\]]+\]\s*/, '');
     let kind = 'info';
-    if (/ERROR|post FAILED|no report produced|abort/i.test(body)) kind = 'error';
+    if (/ERROR|post FAILED|no report produced|abort|AUTH FAILURE|not logged in/i.test(body)) kind = 'error';
     else if (/posted \+ success|REPOST ok/i.test(body)) kind = 'ok';
     else if (/RUN: invoking claude|directive=RUN|directive=REPOST/i.test(body)) kind = 'run';
     else if (/directive=SKIP/i.test(body)) kind = 'skip';
@@ -280,6 +280,17 @@ export function render({ live = false, serverStart = null } = {}) {
     ? `<div class="banner run"><span class="pulse"></span> <b>A bias run is executing right now.</b>${run.slot ? ` ${esc(run.slot.replace(/(\d\d)(\d\d)/, '$1:$2'))} slot, started ${esc(run.since)}.` : ''} Takes a few minutes; the result posts here when done.</div>`
     : '';
 
+  // Auth alert: scan the RAW log after the last success for a logged-out marker.
+  // (claude's "Not logged in" output is untimestamped, so the events feed can miss it.)
+  const authLines = readSafe(join(REPORTS, 'scheduler.log')).split('\n');
+  let okIdx = -1;
+  for (let i = 0; i < authLines.length; i++) if (/posted \+ success/i.test(authLines[i])) okIdx = i;
+  const authAlert = authLines.slice(okIdx + 1).some((l) => /AUTH FAILURE|not logged in|please run \/login/i.test(l));
+  const lastRunEv = allEvents.filter((e) => e.kind === 'run').pop();
+  const authBanner = authAlert
+    ? `<div class="banner auth"><b>⚠️ claude is logged out — scheduled runs are failing.</b> The headless run can't authenticate${lastRunEv ? ` (last attempt ${esc(lastRunEv.tsET)})` : ''}. Fix: run <code>claude /login</code> in a terminal, or set a durable token (see DISCORD-SCHEDULE-SETUP.md). TradingView is fine — this is a CLI-auth issue, not a TV one.</div>`
+    : '';
+
   const ldHtml = ld.loaded
     ? `<span class="pill ${ld.lastExit === '0' ? 'ok' : 'bad'}">launchd ✓ loaded</span>
        <span class="dim">last exit ${esc(ld.lastExit)}${ld.running ? ` · running pid ${esc(ld.pid)}` : ''}</span>`
@@ -351,6 +362,8 @@ export function render({ live = false, serverStart = null } = {}) {
   .pill.live{background:#0d2440;color:#58a6ff;border:1px solid #1f4f7a}
   .banner{margin:14px 0 0;padding:10px 14px;border-radius:10px;font-size:13px;background:#0f2033;border:1px solid #1f4f7a;color:#cfe3ff}
   .banner.run b{color:#e6edf3}
+  .banner.auth{background:#2b1a10;border-color:#7d4a1a;color:#ffd9a8}
+  .banner code{background:#00000055;padding:1px 5px;border-radius:4px;font-size:12px}
   .pulse{display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fb950;animation:pulse 1.5s infinite;vertical-align:middle;margin-right:5px}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,.6)}70%{box-shadow:0 0 0 8px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
   #cd{color:#8b949e}
@@ -368,7 +381,7 @@ export function render({ live = false, serverStart = null } = {}) {
       <div class="dim">next run: ${esc(nextRunText(now))} · last check ${esc(lastCheck)} · next ≈ ${esc(nextCheck)}${live ? ' · reload <span id="cd"></span>' : ''}</div>
     </div>
   </header>
-  ${runBanner}
+  ${authBanner}${runBanner}
 
   <h2>Today — ${esc(now.dateISO)}${now.isWeekend ? ' (weekend — no runs)' : ''}</h2>
   <div class="grid">${todayCards}</div>
