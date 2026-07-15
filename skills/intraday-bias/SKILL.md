@@ -1,6 +1,6 @@
 ---
 name: intraday-bias
-description: Intraday directional bias for OANDA US30USD and NAS100USD — runs the full analysis on BOTH instruments every time. Daily/4H context down to a 1H entry (with optional 15m fill-timing), plus a light economic-calendar flag, ending in a firm LONG / SHORT / DEPENDS call with a trade plan for each. Run at the open (~9:45am ET, just after the 9:30 cash open) to build the baseline, then re-run any time after (post-news, midday) for an UPDATE that reconciles against the earlier call and shows how it's playing out.
+description: Intraday directional bias for OANDA US30USD and NAS100USD — runs the full analysis on BOTH instruments every time. Daily/4H context down to a 1H entry (with optional 15m fill-timing), plus a light economic-calendar flag, ending in a firm LONG / SHORT / DEPENDS call with a trade plan for each. Run at ~10:00am ET, shortly after the 9:30 cash open, to build the baseline, then re-run any time after (post-news, midday) for an UPDATE that reconciles against the earlier call and shows how it's playing out.
 ---
 
 # Intraday Bias — Where Is Price Heading Next?
@@ -24,7 +24,7 @@ Run the **entire workflow (Phases 1–5) once per instrument**, in this order:
 
 ### Run modes — BASELINE vs UPDATE
 This skill is built to be run **several times a day**. Phase 0 decides the mode:
-- **BASELINE** — the first (normally only) run of the day (scheduled ~9:45 ET, just after the open). Build the bias from scratch; write the day's log.
+- **BASELINE** — the first (normally only) run of the day (scheduled ~10:00 ET, shortly after the open). Build the bias from scratch; write the day's log.
 - **UPDATE** — any later run (post-open, post-news, midday). Re-derive the *current* bias **and reconcile it against the day's earlier run(s)**: did the DEPENDS resolve, did the trigger fire, did price hit the stop / T1 / invalidation? Every run is logged to a daily file so the next one — even in a brand-new chat — can pick up the thread.
 
 State at the top of the output which mode this is (and, for an update, the prior run's time).
@@ -344,7 +344,7 @@ Write, per run:
 
 Example (indented so it needs no code fences; the file itself is plain markdown):
 
-    ## 09:47 ET — BASELINE (NY Open)
+    ## 10:02 ET — BASELINE (NY Open)
     US30USD: DEPENDS-bullish | LONG >52,394 | stop 52,270 | T1 52,512 | VWAP 52,286
     NAS100USD: DEPENDS | pivot 30,000 (short <30,000 / long reclaim 30,143) | SMT bullish @ lows
 

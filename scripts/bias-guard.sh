@@ -3,10 +3,10 @@
 # bias-guard.sh — decide whether a scheduled intraday-bias run should proceed.
 #
 # The task runs ONCE each weekday, in a single retry window:
-#   slot 0945  09:45–10:35 ET  -> the day's run (BASELINE; 15 min after the 9:30 open)
+#   slot 1000  10:00–10:50 ET  -> the day's run (BASELINE; 30 min after the 9:30 open)
 # (BASELINE vs UPDATE is decided by the skill itself from its daily log; a lone daily
 #  run is always BASELINE. This guard only handles WHEN and prevents duplicate/
-#  again-today runs; the launchd plist fires at 09:45 and retries 10:00/10:15/10:30.)
+#  again-today runs; the launchd plist fires at 10:00 and retries 10:15/10:30/10:45.)
 #
 # State is tracked in ONE per-slot file, `.state-<slot>-<date>`, whose contents are
 # "<status>:<epoch>" with status in {running, posted, idle}. We use a plain file
@@ -18,7 +18,7 @@
 # state file mainly stops a new fire from starting while a prior run is still going
 # and records "posted" so the slot runs once/day.
 #
-# stdout (parse these): `SLOT=0945`, `REPORT=<path>`, and the directive LAST:
+# stdout (parse these): `SLOT=1000`, `REPORT=<path>`, and the directive LAST:
 #   RUN | REPOST | SKIP:<reason>
 # Diagnostics -> stderr. Window overridable via env (HHMM): BIAS_START/BIAS_END.
 set -u
@@ -30,7 +30,7 @@ mkdir -p "$DIR"
 DATE="$(TZ=America/New_York date +%F)"
 NOWMIN=$((10#$(TZ=America/New_York date +%H%M)))
 NOW=$(date +%s)
-WIN_START=$((10#${BIAS_START:-0945})); WIN_END=$((10#${BIAS_END:-1035}))
+WIN_START=$((10#${BIAS_START:-1000})); WIN_END=$((10#${BIAS_END:-1050}))
 STALE_SEC=$(( 25 * 60 ))
 
 # weekdays only (launchd fires by interval, so enforce the day here). 1=Mon..7=Sun
@@ -41,12 +41,12 @@ if [ "$DOW" -gt 5 ]; then
   exit 0
 fi
 
-# single daily window (launchd fires 09:45/10:00/10:15/10:30; guard runs it once)
+# single daily window (launchd fires 10:00/10:15/10:30/10:45; guard runs it once)
 if [ "$NOWMIN" -ge "$WIN_START" ] && [ "$NOWMIN" -le "$WIN_END" ]; then
-  SLOT=0945
+  SLOT=1000
 else
   echo "guard: now=$NOWMIN outside window($WIN_START-$WIN_END)" >&2
-  echo "SKIP:outside the 09:45 ET window (now $NOWMIN ET)"
+  echo "SKIP:outside the 10:00 ET window (now $NOWMIN ET)"
   exit 0
 fi
 

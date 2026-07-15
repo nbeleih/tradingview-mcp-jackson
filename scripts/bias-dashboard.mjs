@@ -27,10 +27,10 @@ const LOGS = join(REPO, 'intraday-bias-logs');
 const OUT = join(REPORTS, 'dashboard.html');
 
 const SLOTS = [
-  { id: '0945', label: 'DAILY', window: '09:45–10:35 ET', startMin: 9 * 60 + 45, endMin: 10 * 60 + 35 },
+  { id: '1000', label: 'DAILY', window: '10:00–10:50 ET', startMin: 10 * 60, endMin: 10 * 60 + 50 },
 ];
-// labels for slot ids seen in history (older schedules) so past runs still render
-const SLOT_LABELS = { '0830': 'BASELINE', '1000': 'UPDATE', '0945': 'DAILY' };
+// fallback labels for history slot ids; each report's own BASELINE/UPDATE mode wins when present
+const SLOT_LABELS = { '0830': 'BASELINE', '0945': 'DAILY', '1000': 'DAILY' };
 const REFRESH_SEC = 60;
 
 // ---------- small helpers ----------
@@ -252,7 +252,8 @@ function historyRows(dates, ctx) {
       }).join(' ') || '';
       const link = rep ? ` <a href="${esc(rep.path)}">md</a>` : '';
       const t = id.replace(/(\d\d)(\d\d)/, '$1:$2');
-      const lbl = SLOT_LABELS[id] ? ` <span class="tag">${esc(SLOT_LABELS[id])}</span>` : '';
+      const lblText = rep?.mode || SLOT_LABELS[id] || '';
+      const lbl = lblText ? ` <span class="tag">${esc(lblText)}</span>` : '';
       return `<span class="hrun ${s.cls}"><span class="b">${s.badge}</span> <b>${esc(t)}</b>${lbl} ${calls}${link}</span>`;
     }).join('') : '<span class="dim">—</span>';
     const isToday = date === ctx.now.dateISO;

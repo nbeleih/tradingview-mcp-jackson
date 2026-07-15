@@ -1,7 +1,7 @@
 # Intraday Bias → Discord (scheduled)
 
 Runs the **intraday-bias** skill on `OANDA:US30USD` + `OANDA:NAS100USD` once each
-weekday morning (09:45 ET), scanning the live TradingView charts, and posts the full report to a
+weekday morning (10:00 ET), scanning the live TradingView charts, and posts the full report to a
 Discord channel.
 
 ## Why this runs in Claude Code, not Cowork
@@ -25,7 +25,7 @@ network to Discord.
 | Delivery | `scripts/discord-post.mjs` | Splits the report into ≤2000-char messages and POSTs to the webhook (via curl). |
 | Webhook secret | `.discord-webhook` (repo root, git-ignored) | One line: your Discord webhook URL. |
 | Saved reports | `bias-reports/intraday-bias-<date>-<slot>.md` (git-ignored) | Durable copy of each run + `scheduler.log`. |
-| launchd job | `scripts/com.nourbeleih.intraday-bias.plist` | Fires the runner at 09:45 ET (+ 10:00/10:15/10:30 retries). |
+| launchd job | `scripts/com.nourbeleih.intraday-bias.plist` | Fires the runner at 10:00 ET (+ 10:15/10:30/10:45 retries). |
 
 ## One-time setup
 
@@ -51,21 +51,21 @@ TradingView Desktop should be open (the runner will `tv_launch` it otherwise).
 
 ## Schedule & retry
 
-launchd fires the runner at **09:45 ET** (and retries **10:00 / 10:15 / 10:30**);
+launchd fires the runner at **10:00 ET** (and retries **10:15 / 10:30 / 10:45**);
 `bias-guard.sh` decides what happens:
 
 | Slot | ET window | Mode |
 |---|---|---|
-| 0945 | 09:45–10:35 (fires 09:45; 10:00/10:15/10:30 are retries) | BASELINE — 15 min after the 9:30 open |
+| 1000 | 10:00–10:50 (fires 10:00; 10:15/10:30/10:45 are retries) | BASELINE — 30 min after the 9:30 open |
 
-- **Weekdays only**, and only inside the 09:45–10:35 window.
-- Runs the full analysis **at most once per day** (state file `.state-0945-<date>`). The
-  09:45 fire runs it; 10:00/10:15/10:30 only fire a `claude` run if the earlier attempt
+- **Weekdays only**, and only inside the 10:00–10:50 window.
+- Runs the full analysis **at most once per day** (state file `.state-1000-<date>`). The
+  10:00 fire runs it; 10:15/10:30/10:45 only fire a `claude` run if the earlier attempt
   failed — otherwise they SKIP, so it's normally **one `claude` run per day**.
 - State files hold `running|posted|idle:<epoch>` and are only **overwritten, never
   deleted**. A `running` state older than 25 min is treated as a crashed run and reclaimed.
 - **Retry if asleep:** launchd runs a missed calendar time once on wake, so if the Mac was
-  asleep at 09:45, it runs when it wakes (if still inside the window).
+  asleep at 10:00, it runs when it wakes (if still inside the window).
 - If the analysis fails or Discord is unreachable, the report is still saved and the slot
   is set `idle` so the next retry time runs it (or `REPOST`s the saved report).
 

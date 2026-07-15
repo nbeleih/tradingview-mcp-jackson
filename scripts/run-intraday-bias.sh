@@ -42,7 +42,7 @@ DATE="$(TZ=America/New_York date +%F)"
 PRETTY="$(TZ=America/New_York date '+%b %-d, %Y')"
 
 case "$SLOT" in
-  0945) TITLE="**📊 Intraday Bias — $PRETTY · 9:45 ET run**" ;;
+  1000) TITLE="**📊 Intraday Bias — $PRETTY · 10:00 ET run**" ;;
   *)    TITLE="**📊 Intraday Bias — $PRETTY**" ;;
 esac
 
