@@ -111,7 +111,7 @@ Pull the Daily OHLCV and read the **second-to-last completed bar** (yesterday):
 
 **First clear stale previous-day lines, then draw fresh ones.** PDH/PDL/PDC change every day, so old ones must not stack up: from the Phase 1A `draw_list` snapshot, `draw_remove_one` on any horizontal line labeled `PDH`, `PDL`, or `PDC` (these are the skill's own from a prior run — never remove differently-labeled user lines).
 
-**Then draw PDH and PDL** with `draw_shape` `horizontal_line` (label them "PDH" and "PDL"), using the **purple** previous-day color: `overrides: '{"linecolor": "#9c27b0", "linewidth": 2}'`. Record the returned drawing IDs. (Draw PDC in the same purple too if useful.)
+**Then draw PDH and PDL** with `draw_shape` `horizontal_line` (label them "PDH" and "PDL"), using the **purple** previous-day color: `overrides: '{"linecolor": "#9c27b0", "linewidth": 1}'`. Record the returned drawing IDs. (Draw PDC in the same purple too if useful.)
 
 - Price **above PDH** = breakout, bullish lean, PDH flips to support.
 - Price **below PDL** = breakdown, bearish lean, PDL flips to resistance.
@@ -184,8 +184,8 @@ S/R is the core of the bias. Build a map from all of these sources — **weight 
 **Draw every key level** on the chart with `draw_shape` `horizontal_line` (PDH and PDL are already drawn in Phase 1D — add the other important S/R). Label them clearly (e.g. "R1 24,910", "S1 24,540").
 
 **Line colors — never use base red (`#ff0000`) or green (`#00ff00`).** Pass the color via `overrides`:
-- **Resistance** levels → orange: `overrides: '{"linecolor": "#ff9800", "linewidth": 2}'`
-- **Support** levels → blue: `overrides: '{"linecolor": "#2962ff", "linewidth": 2}'`
+- **Resistance** levels → orange: `overrides: '{"linecolor": "#ff9800", "linewidth": 1}'`
+- **Support** levels → blue: `overrides: '{"linecolor": "#2962ff", "linewidth": 1}'`
 - **Previous-day levels** (PDH/PDL/PDC) → purple `#9c27b0` (set in Phase 1D)
 
 **These lines STAY on the chart after the scan — they are the deliverable the user trades off; do not remove them in cleanup.** Track the ID of every line you draw. **Never remove or clear a line the user already had (you recorded those in Phase 1A).**
@@ -221,7 +221,7 @@ Below, **PRIMARY** = the index being analyzed, **PEER** = the correlated one you
 1. Get SPX500USD's previous-day high and low from its **Daily** OHLCV (the 2nd-to-last completed bar) — via `batch_run` `get_ohlcv` on the Daily, or read it after switching.
 2. `chart_set_symbol` to `OANDA:SPX500USD`, then `draw_list` on it.
 3. **Remove any stale previous-day lines** there: `draw_remove_one` on horizontal lines labeled `PDH`/`PDL` (the skill's own from a prior run) — never touch the user's other SPX lines.
-4. Draw the fresh **PDH** and **PDL** with `draw_shape` `horizontal_line`, labeled, in the purple previous-day color (`overrides: '{"linecolor": "#9c27b0", "linewidth": 2}'`).
+4. Draw the fresh **PDH** and **PDL** with `draw_shape` `horizontal_line`, labeled, in the purple previous-day color (`overrides: '{"linecolor": "#9c27b0", "linewidth": 1}'`).
 5. `chart_set_symbol` back to `OANDA:NAS100USD` to finish the pass.
 
 ---
