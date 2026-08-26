@@ -69,6 +69,21 @@ launchd fires the runner at **10:00 ET** (and retries **10:15 / 10:30 / 10:45**)
 - If the analysis fails or Discord is unreachable, the report is still saved and the slot
   is set `idle` so the next retry time runs it (or `REPOST`s the saved report).
 
+## Pause / skip a run
+
+The scheduled run is unattended, so choosing *not* to run it means flipping a switch
+ahead of time (`bias-guard.sh` checks it and emits `SKIP:paused`; the dashboard shows a
+⏸ PAUSED banner, and no `claude` run / Discord post happens):
+
+```bash
+bash scripts/bias-pause.sh          # pause indefinitely (until you resume)
+bash scripts/bias-pause.sh today    # skip just today (auto-resumes tomorrow)
+bash scripts/bias-resume.sh         # re-enable
+```
+
+The flag is `bias-reports/PAUSE` (gitignored, local). A "today" pause holds the date and
+lapses on its own the next day; an indefinite pause stays until `bias-resume.sh`.
+
 ## Requirements at run time
 - The Mac is awake (or wakes) during the window; TradingView Desktop installed/running
   (port 9222); `claude` authenticated (see **Durable auth** below) with the tradingview MCP.

@@ -33,6 +33,18 @@ NOW=$(date +%s)
 WIN_START=$((10#${BIAS_START:-1000})); WIN_END=$((10#${BIAS_END:-1050}))
 STALE_SEC=$(( 25 * 60 ))
 
+# user pause switch: `bias-pause.sh` writes bias-reports/PAUSE. Paused when the flag is
+# empty / `indefinite`, or holds today's ET date (skip-just-today). `bias-resume.sh` clears it.
+PAUSE="$DIR/PAUSE"
+if [ -f "$PAUSE" ]; then
+  P="$(tr -d '[:space:]' < "$PAUSE" 2>/dev/null || true)"
+  if [ -z "$P" ] || [ "$P" = "indefinite" ] || [ "$P" = "$DATE" ]; then
+    echo "guard: paused (${P:-indefinite})" >&2
+    echo "SKIP:paused (${P:-indefinite})"
+    exit 0
+  fi
+fi
+
 # weekdays only (launchd fires by interval, so enforce the day here). 1=Mon..7=Sun
 DOW=$(TZ=America/New_York date +%u)
 if [ "$DOW" -gt 5 ]; then
