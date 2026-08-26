@@ -15,7 +15,7 @@
 //
 // Run standalone anytime:  node scripts/bias-dashboard.mjs   (then: open bias-reports/dashboard.html)
 
-import { readFileSync, readdirSync, existsSync, writeFileSync, realpathSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
@@ -152,6 +152,15 @@ export function status() {
   const now = etNow();
   const stateMap = stateFiles();
   return { ok: true, etDate: now.dateISO, etTime: now.hm, running: runningNow(now, stateMap), launchd: launchd() };
+}
+
+// Toggle the pause flag — used by the live server's POST /pause, /pause-today, /resume.
+export function setPause(mode) {
+  const p = join(REPORTS, 'PAUSE');
+  if (mode === 'off') { try { if (existsSync(p)) rmSync(p); } catch {} return { paused: false }; }
+  const value = mode === 'today' ? etNow().dateISO : 'indefinite';
+  writeFileSync(p, value + '\n');
+  return { paused: true, value };
 }
 
 // ---------- status logic ----------
@@ -373,6 +382,11 @@ export function render({ live = false, serverStart = null } = {}) {
   .banner.run b{color:#e6edf3}
   .banner.auth{background:#2b1a10;border-color:#7d4a1a;color:#ffd9a8}
   .banner.paused{background:#241a2e;border-color:#5a4a7a;color:#e6d6ff}
+  .controls{display:flex;gap:8px;margin:12px 0 0}
+  .btn{background:#1c2330;color:#c9d1d9;border:1px solid #30363d;border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+  .btn:hover{background:#242c3a;border-color:#3d4655}
+  .btn.resume{background:#12261a;color:#3fb950;border-color:#1f6f34}
+  .btn:disabled{opacity:.6;cursor:default}
   .banner code{background:#00000055;padding:1px 5px;border-radius:4px;font-size:12px}
   .pulse{display:inline-block;width:9px;height:9px;border-radius:50%;background:#3fb950;animation:pulse 1.5s infinite;vertical-align:middle;margin-right:5px}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,.6)}70%{box-shadow:0 0 0 8px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
@@ -392,6 +406,7 @@ export function render({ live = false, serverStart = null } = {}) {
     </div>
   </header>
   ${pauseBanner}${authBanner}${runBanner}
+  ${live ? `<div class="controls">${paused ? `<button class="btn resume" data-act="resume">▶ Resume runs</button>` : `<button class="btn" data-act="pause">⏸ Pause</button><button class="btn" data-act="pause-today">Skip today</button>`}</div>` : ''}
 
   <h2>Today — ${esc(now.dateISO)}${now.isWeekend ? ' (weekend — no runs)' : ''}</h2>
   <div class="grid">${todayCards}</div>
@@ -415,6 +430,7 @@ var c=document.getElementById('liveclock');if(c)c.textContent=et+' ET';
 var cd=document.getElementById('cd');if(cd)cd.textContent=R+'s';
 if(R--<=0)location.reload();}
 setInterval(tick,1000);tick();})();
+document.querySelectorAll('.btn[data-act]').forEach(function(b){b.addEventListener('click',function(){var m={pause:'/pause','pause-today':'/pause-today',resume:'/resume'}[b.dataset.act];b.disabled=true;b.textContent='…';fetch(m,{method:'POST',headers:{'x-bias-dash':'1'}}).then(function(){location.reload();}).catch(function(){location.reload();});});});
 </script>` : ''}</body></html>`;
 }
 

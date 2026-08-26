@@ -14,7 +14,7 @@
 //   Always-on: kept alive by scripts/com.nourbeleih.bias-dashboard.plist
 
 import { createServer } from 'node:http';
-import { render, status } from './bias-dashboard.mjs';
+import { render, status, setPause } from './bias-dashboard.mjs';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.BIAS_DASH_PORT) || 8787;
@@ -23,6 +23,18 @@ const SERVER_START = Math.floor(Date.now() / 1000);
 const server = createServer((req, res) => {
   const url = (req.url || '/').split('?')[0];
   try {
+    // interactive pause controls — localhost only; the custom header blocks cross-site POSTs
+    if (req.method === 'POST') {
+      if (req.headers['x-bias-dash'] !== '1') { res.writeHead(403, { 'content-type': 'text/plain' }); res.end('forbidden'); return; }
+      const mode = url === '/pause' ? 'indefinite' : url === '/pause-today' ? 'today' : url === '/resume' ? 'off' : null;
+      if (mode) {
+        const r = setPause(mode);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ ok: true, ...r }));
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); return;
+    }
     if (url === '/health' || url === '/health/') {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ ...status(), serverUptimeSec: Math.floor(Date.now() / 1000) - SERVER_START }));
